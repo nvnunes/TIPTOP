@@ -15,6 +15,7 @@ norm = mpl.colors.Normalize(vmin=0, vmax=1)
 rc("text", usetex=False)
 
 import json
+from copy import copy, deepcopy
 
 rad2mas = 3600 * 180 * 1000 / np.pi
 
@@ -146,6 +147,8 @@ class baseSimulation(object):
 
         else:
             raise FileNotFoundError('No .yml or .ini can be found in '+ self.path)
+
+        self.has_stage2 = any(key.endswith('_Stage2') for key in self.my_data_map.keys())
 
         self.tel_radius = self.my_data_map['telescope']['TelescopeDiameter']/2  # mas
         wvl_temp = self.my_data_map['sources_science']['Wavelength']
@@ -606,23 +609,46 @@ class baseSimulation(object):
                     self.results = resultList
 
     def ngsPSF(self):
+        if self.has_stage2:
+            psInMas = self.ngs_psInMas
+            overSamp = self.ngs_overSamp
+            N = self.ngs_N
+            nPixPSF = self.ngs_nPixPSF
+            sx = self.ngs_sx
+            grid_diameter = self.ngs_grid_diameter
+            freq_range = self.ngs_freq_range
+            dk = self.ngs_dk
+        else:
+            psInMas = self.psInMas
+            overSamp = self.overSamp
+            N = self.N
+            nPixPSF = self.nPixPSF
+            sx = self.sx
+            grid_diameter = self.grid_diameter
+            freq_range = self.freq_range
+            dk = self.dk
+
         # pixel size for LO
-        LO_PSFsInMas = self.psInMas*self.LO_wvl/self.wvlMax
+        LO_PSFsInMas = psInMas*self.LO_wvl/self.wvlMax
+
         # error messages for wrong pixel size
         if LO_PSFsInMas > self.LO_psInMas:
             extraOversampLO = np.ceil(self.LO_psInMas/LO_PSFsInMas)
-            overSampLO = self.overSamp * extraOversampLO
-            nLO = extraOversampLO*self.N
-            nPixPSFLO = extraOversampLO*self.nPixPSF
+            overSampLO = overSamp * extraOversampLO
+            nLO = extraOversampLO*N
+            nPixPSFLO = extraOversampLO*nPixPSF
             LO_PSFsInMas /= extraOversampLO
         else:
-            overSampLO = self.overSamp
-            nLO = self.N
-            nPixPSFLO = self.nPixPSF
+            overSampLO = overSamp
+            nLO = N
+            nPixPSFLO = nPixPSF
 
         # -----------------------------------------------------------------
         # PSD and sub-aperture mask for NGS directions
-        psdNGS = arrayP3toMastsel(self.PSD[-self.nNaturalGS_field:])
+        if self.has_stage2:
+            psdNGS = arrayP3toMastsel(self.ngs_PSD)
+        else:
+            psdNGS = arrayP3toMastsel(self.PSD[-self.nNaturalGS_field:])
         k  = np.sqrt(self.fao.freq.k2_)
 
         # Define the LO sub-aperture shape
@@ -646,8 +672,8 @@ class baseSimulation(object):
         if self.verbose:
             print('******** LO PSF - NGS directions (1 sub-aperture)')
         psfLE_NGS = psdSetToPsfSet(psdNGS, maskLO,
-                                   self.LO_wvl, nLO, self.sx, self.grid_diameter,
-                                   self.freq_range, self.dk, nPixPSFLO,
+                                   self.LO_wvl, nLO, sx, grid_diameter,
+                                   freq_range, dk, nPixPSFLO,
                                    self.wvlMax, overSampLO,
                                    opdMap=self.opdMap)
 
@@ -685,13 +711,13 @@ class baseSimulation(object):
             if self.verbose:
                 print('Adding aliasing error on LO!')
             # DIFFRACTION LIMITED PSD and PSF
-            psdDL = Field(self.LO_wvl, nLO, self.freq_range, 'rad')
-            maskField = Field(self.LO_wvl, nLO, self.grid_diameter)
+            psdDL = Field(self.LO_wvl, nLO, freq_range, 'rad')
+            maskField = Field(self.LO_wvl, nLO, grid_diameter)
             if isinstance(maskLO, list):
-                maskField.sampling = congrid(maskLO[i], [self.sx, self.sx])
+                maskField.sampling = congrid(maskLO[i], [sx, sx])
             else:
-                maskField.sampling = congrid(maskLO, [self.sx, self.sx])
-            maskField.sampling = zeroPad(maskField.sampling, (nLO-self.sx)//2)
+                maskField.sampling = congrid(maskLO, [sx, sx])
+            maskField.sampling = zeroPad(maskField.sampling, (nLO-sx)//2)
             psfNgsDL = longExposurePsf(maskField, psdDL)
             fwhmX,fwhmY  = getFWHM( psfNgsDL.sampling, LO_PSFsInMas, method='contour', nargout=2)
             self.NGS_DL_FWHM_mas = np.sqrt(fwhmX*fwhmY)
@@ -877,6 +903,28 @@ class baseSimulation(object):
                 self.fao.ao.configLO()
                 self.fao.ao.configLO_SC()
 
+            if self.has_stage2:
+                # Stage 1 on NGS
+                self.ngs_fao = deepcopy(self.fao)
+                self.ngs_fao.ao.src = self.ngs_fao.ao.ngs
+
+                self.ngs_fao.initComputations()
+
+                self.ngs_PSD           = self.ngs_fao.PSD.transpose()
+                self.ngs_N             = self.ngs_PSD[0].shape[0]
+                self.ngs_psInMas       = cpuArray(self.ngs_fao.freq.psInMas[0])
+                self.ngs_nPixPSF       = self.my_data_map['sensor_science']['FieldOfView']
+                self.ngs_overSamp      = int(self.ngs_fao.freq.kRef_)
+                self.ngs_freq_range    = self.ngs_N*self.ngs_fao.freq.PSDstep
+                self.ngs_pitch         = 1/self.ngs_freq_range
+                self.ngs_grid_diameter = self.ngs_pitch*self.ngs_N
+                self.ngs_sx            = int(2*np.round(self.tel_radius/self.ngs_pitch))
+                self.ngs_dk            = 1e9*self.ngs_fao.freq.kcMax_/self.ngs_fao.freq.resAO
+                self.ngs_wvlRef        = self.ngs_fao.freq.wvlRef
+
+                # State 2 on Science Points
+                config_stage2(self.fao.ao)
+
             self.fao.initComputations()
 
             # High-order PSD caculations at the science directions and NGSs directions
@@ -1051,3 +1099,120 @@ class baseSimulation(object):
                     print('LO_res [nm]:',self.LO_res)
                 if hasattr(self,'GF_res'):
                     print('GF_res [nm]:',self.GF_res)
+
+def config_stage2(ao):
+    if 'DM_Stage2' in ao.my_data_map.keys():
+        if ao.check_config_key('DM_Stage2','NumberActuators'):
+            nActu = ao.get_config_value('DM_Stage2','NumberActuators')
+        else:
+            ao.raiseMissingRequiredOpt('DM_Stage2', 'NumberActuators')
+
+        if ao.check_config_key('DM_Stage2','DmPitchs'):
+            DmPitchs = np.array(ao.get_config_value('DM_Stage2','DmPitchs'))
+        else:
+            ao.raiseMissingRequiredOpt('DM_Stage2','DmPitchs')
+
+        if ao.check_config_key('DM_Stage2','InfModel'):
+            InfModel = ao.get_config_value('DM_Stage2','InfModel')
+        else:
+            InfModel = 'gaussian'
+
+        if ao.check_config_key('DM_Stage2','InfCoupling'):
+            InfCoupling = ao.get_config_value('DM_Stage2','InfCoupling')
+        else:
+            InfCoupling = [0.2]
+
+        if ao.check_config_key('DM_Stage2','DmHeights'):
+            DmHeights = ao.get_config_value('DM_Stage2','DmHeights')
+        else:
+            DmHeights = [0.0]
+
+        if ao.check_config_key('DM_Stage2','OptimizationWeight'):
+            opt_w = ao.get_config_value('DM_Stage2','OptimizationWeight') 
+        else:
+            opt_w = [0.0]
+            
+        if ao.check_config_key('DM_Stage2','OptimizationAzimuth'):
+            opt_az = ao.get_config_value('DM_Stage2','OptimizationAzimuth') 
+        else:
+            opt_az = [0.0]
+            
+        if ao.check_config_key('DM_Stage2','OptimizationZenith'):
+            opt_zen = ao.get_config_value('DM_Stage2','OptimizationZenith') 
+        else:
+            opt_zen = [0.0]
+
+         # ----- verification
+        if (len(opt_zen) != len(opt_az)) or (len(opt_zen) != len(opt_w)):
+            ao.raiseNotSameLength('DM_Stage2', ['OptimizationZenith','OptimizationAzimuth','OptimizationWeight'])
+              
+        if ao.check_config_key('DM_Stage2','OptimizationConditioning'):
+            cond = ao.get_config_value('DM_Stage2','OptimizationConditioning')
+        else:
+            cond = 100.0
+
+        if ao.check_config_key('DM_Stage2','NumberReconstructedLayers'):
+            nrec = ao.get_config_value('DM_Stage2','NumberReconstructedLayers')
+        else:
+            nrec = 10
+
+        if ao.check_config_key('DM_Stage2','AoArea'):
+            AoArea = ao.get_config_value('DM_Stage2','AoArea')
+        else:
+            AoArea = 'circle'
+
+        # ----- creating the dm class
+        ao.dms = p3.aoSystem.deformableMirror.deformableMirror(nActu, DmPitchs,
+                                    heights=DmHeights, mechCoupling=InfCoupling,
+                                    modes=InfModel,
+                                    opt_dir=[opt_zen,opt_az],
+                                    opt_weights=opt_w,
+                                    opt_cond=cond,n_rec = nrec,
+                                    AoArea=AoArea)
+
+        if (len(opt_zen) == 0) or (len(opt_az) == 0) or (len(opt_w) == 0):
+            ao.aoMode = 'MOAO'
+
+    if 'RTC_Stage2' in ao.my_data_map.keys():
+        if ao.check_config_key('RTC_Stage2','LoopGain_HO'):
+            ao.LoopGain_HO = ao.get_config_value('RTC_Stage2','LoopGain_HO')
+        else:
+            ao.LoopGain_HO = 0.5
+
+        if ao.check_config_key('RTC_Stage2','SensorFrameRate_HO'):
+            frameRate_HO = ao.get_config_value('RTC_Stage2','SensorFrameRate_HO')
+        else:
+            frameRate_HO = 500.0
+
+        if ao.check_config_key('RTC_Stage2','LoopDelaySteps_HO'):
+            delay_HO = ao.get_config_value('RTC_Stage2','LoopDelaySteps_HO')
+        else:
+            delay_HO = 2
+
+        if ao.check_config_key('RTC_Stage2','LoopGain_LO'):
+            temp = ao.get_config_value('RTC_Stage2','LoopGain_LO')
+            if temp != 'optimize':
+                ao.LoopGain_LO = temp
+            else:
+                ao.LoopGain_LO = None
+        else:
+            ao.LoopGain_LO = None
+
+        if ao.check_config_key('RTC_Stage2','SensorFrameRate_LO'):
+            frameRate_LO = ao.get_config_value('RTC_Stage2','SensorFrameRate_LO')
+        else:
+            frameRate_LO = None
+
+        if ao.check_config_key('RTC_Stage2','LoopDelaySteps_LO'):
+            delay_LO = ao.get_config_value('RTC_Stage2','LoopDelaySteps_LO')
+        else:
+            delay_LO = None
+
+        if ao.check_config_key('RTC_Stage2','ResidualError'):
+            wfe = ao.get_config_value('RTC_Stage2','ResidualError')
+        else:
+            wfe = None
+
+        ao.rtc = p3.aoSystem.rtc.rtc(ao.LoopGain_HO, frameRate_HO, delay_HO, wfe=wfe,
+                    loopGainLO=ao.LoopGain_LO, frameRateLO=frameRate_LO, delayLO=delay_LO)
+
