@@ -710,7 +710,8 @@ class baseSimulation(object):
                 ee_ *= 1/np.max(ee_)
                 ee_at_radius_fn = interp1d(rr_, ee_, kind='cubic', bounds_error=False)
                 # max is used to compute EE on at least a radius of one pixel
-                ee_NGS = ee_at_radius_fn(max([FWHM,self.LO_psInMas]))
+                # min is used to avoid nan being returned if FWHM is larger than radial profile
+                ee_NGS = ee_at_radius_fn(min([rr_[-1],max([FWHM,self.LO_psInMas])]))
             self.NGS_EE_field.append(ee_NGS)
             if self.verbose:
                 print('SR(@',int(self.LO_wvl*1e9),'nm)        :', "%.5f" % SR)
