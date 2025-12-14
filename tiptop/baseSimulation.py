@@ -513,7 +513,7 @@ class baseSimulation(object):
             else:
                 self.results = resultList
 
-    def finalPSF(self,astIndex):
+    def finalPSF(self,astIndex=None,skipMerit=False):
         if astIndex is None or self.firstSimCall:
             # ----------------------------------------------------------------------------
             ## HO PSF
@@ -531,32 +531,33 @@ class baseSimulation(object):
 
             # -----------------------------------------------------------------
             ## Merit functions
-            self.pointings_FWHM_mas   = []
+            if not skipMerit:
+                self.pointings_FWHM_mas   = []
 
-            for i in range(self.nWvl):
-                if self.nWvl>1:
-                    psfList = psfLongExpPointingsArr[i]
-                    wvl = self.wvl[i]
-                else:
-                    psfList = psfLongExpPointingsArr
-                    wvl = self.wvl[0]
-                fwhmList = []
-                idx = 0
-                for img in psfList:
-                    # Get SFWHM in mas the star positions at the sensing wavelength
-                    fwhmX,fwhmY = getFWHM(img.sampling, self.psInMas, method='contour', nargout=2)
-                    fwhm = np.sqrt(fwhmX*fwhmY)
-                    fwhmList.append(fwhm) #average over major and minor axes
-                    if self.verbose:
-                        s1 = cpuArray(PSD_HO[idx]).sum()
-                        sr = np.exp(-s1*(2*np.pi*1e-9/wvl)**2) # Strehl-ratio at the sensing wavelength
-                        print('SR(@',int(wvl*1e9),'nm)        :', "%.5f" % sr)
-                        print('FWHM(@',int(wvl*1e9),'nm) [mas]:', "%.3f" % fwhm)
-                    idx += 1
-                if self.nWvl>1:
-                    self.pointings_FWHM_mas.append(fwhmList)
-                else:
-                    self.pointings_FWHM_mas = fwhmList
+                for i in range(self.nWvl):
+                    if self.nWvl>1:
+                        psfList = psfLongExpPointingsArr[i]
+                        wvl = self.wvl[i]
+                    else:
+                        psfList = psfLongExpPointingsArr
+                        wvl = self.wvl[0]
+                    fwhmList = []
+                    idx = 0
+                    for img in psfList:
+                        # Get SFWHM in mas the star positions at the sensing wavelength
+                        fwhmX,fwhmY = getFWHM(img.sampling, self.psInMas, method='contour', nargout=2)
+                        fwhm = np.sqrt(fwhmX*fwhmY)
+                        fwhmList.append(fwhm) #average over major and minor axes
+                        if self.verbose:
+                            s1 = cpuArray(PSD_HO[idx]).sum()
+                            sr = np.exp(-s1*(2*np.pi*1e-9/wvl)**2) # Strehl-ratio at the sensing wavelength
+                            print('SR(@',int(wvl*1e9),'nm)        :', "%.5f" % sr)
+                            print('FWHM(@',int(wvl*1e9),'nm) [mas]:', "%.3f" % fwhm)
+                        idx += 1
+                    if self.nWvl>1:
+                        self.pointings_FWHM_mas.append(fwhmList)
+                    else:
+                        self.pointings_FWHM_mas = fwhmList
 
             self.psfLongExpPointingsArr = psfLongExpPointingsArr
 
@@ -869,7 +870,7 @@ class baseSimulation(object):
                     self.ee = ee
 
 
-    def doOverallSimulation(self, astIndex=None):
+    def doOverallSimulation(self, astIndex=None, skipMerit=False, skipPSF1D=False):
 
         if self.LOisOn:        
             self.configLO(astIndex)
@@ -1052,7 +1053,7 @@ class baseSimulation(object):
 
         # ------------------------------------------------------------------------
         # final PSF computation
-        self.finalPSF(astIndex)
+        self.finalPSF(astIndex, skipMerit=skipMerit)
 
         # ------------------------------------------------------------------------
         # plots
@@ -1092,7 +1093,8 @@ class baseSimulation(object):
                     self.cubeResults = cubeResults
                     cubeResultsArray = cubeResults
                 self.cubeResultsArray = np.array(cubeResultsArray)
-            self.computePSF1D()
+            if not skipPSF1D:
+                self.computePSF1D()
             if self.verbose:
                 print('HO_res [nm]:',self.HO_res)
                 if self.LOisOn:
