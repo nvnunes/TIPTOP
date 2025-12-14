@@ -46,7 +46,7 @@ class baseSimulation(object):
                           doPlot=False, addSrAndFwhm=True,
                           verbose=False, getHoErrorBreakDown=False,
                           savePSDs=False, ensquaredEnergy=False,
-                          eeRadiusInMas=50):
+                          eeRadiusInMas=50, returnUnnormPsf=False):
 
         self.firstSimCall =True
         if verbose: np.set_printoptions(precision=3)
@@ -65,6 +65,7 @@ class baseSimulation(object):
         self.savePSDs = savePSDs
         self.ensquaredEnergy = ensquaredEnergy
         self.eeRadiusInMas = eeRadiusInMas
+        self.returnUnnormPsf = returnUnnormPsf
 #        if self.returnRes and self.doPlot:
 #            print('WARNING: returnRes and doPlot cannot both be True, setting doPlot to False.')
 #            self.doPlot = False
@@ -503,15 +504,24 @@ class baseSimulation(object):
             else:
                 psfList = self.psfLongExpPointingsArr
             resultList = []
+            if self.returnUnnormPsf:
+                unnormResultList = []
             for psfLongExp, resSpec, resSpecJ in zip(psfList, resSpecList, resSpecListJ):
-                temp = convolve(psfLongExp, resSpec)
+                temp = convolve(psfLongExp, resSpec, skip_norm=self.returnUnnormPsf)
                 if self.jitter_FWHM is not None:
-                    temp = convolve(temp, resSpecJ)
+                    temp = convolve(temp, resSpecJ, skip_norm=self.returnUnnormPsf)
+                if self.returnUnnormPsf:
+                    unnormResultList.append(copy(temp))
+                    temp.sampling = temp.sampling / temp.sampling.sum()
                 resultList.append(temp)
             if self.nWvl>1:
                 self.results.append(resultList)
+                if self.returnUnnormPsf:
+                    self.unnormResults.append(unnormResultList)
             else:
                 self.results = resultList
+                if self.returnUnnormPsf:
+                    self.unnormResults = unnormResultList
 
     def finalPSF(self,astIndex=None,skipMerit=False):
         if astIndex is None or self.firstSimCall:
