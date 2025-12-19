@@ -20,28 +20,28 @@ from copy import copy, deepcopy
 rad2mas = 3600 * 180 * 1000 / np.pi
 
 class baseSimulation(object):
-    
+
     def raiseMissingRequiredOpt(self,sec,opt):
         raise ValueError("'{}' is missing from section '{}'"
                          .format(opt,sec))
-        
+
     def raiseMissingRequiredSec(self,sec):
         raise ValueError("The section '{}' is missing from the parameter file"
                          .format(sec))
-        
+
     def raiseNotSameLength(self,sec,opt):
         raise ValueError("'{}' in section '{}' must have the same length"
                          .format(opt,sec))
-    
-    def check_section_key(self, primary):        
+
+    def check_section_key(self, primary):
         return primary in self.my_data_map.keys()
-    
+
     def check_config_key(self, primary, secondary):
         if primary in self.my_data_map.keys():
             return secondary in self.my_data_map[primary].keys()
         else:
             return False
-    
+
     def __init__(self, path, parametersFile, outputDir, outputFile, doConvolve=True,
                           doPlot=False, addSrAndFwhm=True,
                           verbose=False, getHoErrorBreakDown=False,
@@ -70,84 +70,87 @@ class baseSimulation(object):
 #            print('WARNING: returnRes and doPlot cannot both be True, setting doPlot to False.')
 #            self.doPlot = False
 
-        # get the system description (stored in my_data_map) from the ini/yml file
-        fullPathFilename_ini = os.path.join(self.path, self.parametersFile + '.ini')
-        fullPathFilename_yml = os.path.join(self.path, self.parametersFile + '.yml')
-        if os.path.exists(fullPathFilename_yml):
-            self.fullPathFilename = fullPathFilename_yml
-            with open(fullPathFilename_yml) as f:
-                my_yaml_dict = yaml.safe_load(f)        
-            self.my_data_map = my_yaml_dict
-        elif os.path.exists(fullPathFilename_ini):
-            self.fullPathFilename = fullPathFilename_ini
-            config = ConfigParser()
-            config.optionxform = str
-            config.read(fullPathFilename_ini)
-            self.my_data_map = {} 
-            for section in config.sections():
-                self.my_data_map[section] = {}
-                for name,value in config.items(section):
-                    self.my_data_map[section].update({name:eval(value)})
+        # Load configuration file
+        self.loadConfigurationFile()
 
-            #Verify the presence of parameters called in TIPTOP before they are verified 
-            #in P3 or in MASTSEL
-            if not self.check_section_key('telescope'):
-                self.raiseMissingRequiredSec('telescope')
-                
-            if not self.check_config_key('telescope','TelescopeDiameter'):
-                self.raiseMissingRequiredOpt('telescope','TelescopeDiameter')
-            
-            if not self.check_config_key('telescope','glFocusOnNGS'):
-                self.my_data_map['telescope']['glFocusOnNGS'] = False
-            
-            if not self.check_section_key('sources_science') :
-                self.raiseMissingRequiredSec('sources_science') 
-            
-            if not self.check_config_key('sources_science','Wavelength'):
-                self.raiseMissingRequiredOpt('sources_science', 'Wavelength')
-            
-            if not self.check_config_key('sources_science','Zenith'):
-                #In P3.aoSystem this is optionnal, to remain consistent it is optionnal here too
-                self.my_data_map['sources_science']['Zenith'] = [0.0]
-            
-            if not self.check_config_key('sources_science','Azimuth'):
-                #In P3.aoSystem this is optionnal, to remain consistent it is optionnal here too
-                self.my_data_map['sources_science']['Azimuth'] = [0.0]
-            
-            if (len(self.my_data_map['sources_science']['Zenith']) != 
-                len(self.my_data_map['sources_science']['Azimuth'])):
-                self.raiseNotSameLength('sources_science', ['Zenith','Azimuth'])
-            
-            #TODO should an error be raised if sensor_LO is defined but not source_LO or vice versa?
-            if self.check_section_key('sources_LO') and not self.check_section_key('sensor_LO'):
-                raise KeyError("'sensor_LO' must be defined if 'sources_LO' is defined.")
-            elif not self.check_section_key('sources_LO') and self.check_section_key('sensor_LO'):
-                raise KeyError("'sources_LO' must be defined if 'sensor_LO' is defined.")
-            #If both are defined we can proceed.
-            elif self.check_section_key('sources_LO') and self.check_section_key('sensor_LO'):
-                if not self.check_config_key('sources_LO', 'Wavelength'):
-                    self.raiseMissingRequiredOpt('sources_LO', 'Wavelength')
-                
-                if not self.check_config_key('sources_LO','Zenith'):
-                    self.my_data_map['sources_LO']['Zenith'] = [0.0]
-                    
-                if not self.check_config_key('sources_LO','Azimuth'):
-                    self.my_data_map['sources_LO']['Azimuth'] = [0.0]
-                
-                if (len(self.my_data_map['sources_LO']['Zenith']) != 
-                    len(self.my_data_map['sources_LO']['Azimuth'])):
-                    self.raiseNotSameLength('sources_LO', ['Zenith','Azimuth'])
-                
-                if not self.check_config_key('sensor_LO', 'NumberPhotons'):
-                    raise self.raiseMissingRequiredOpt('sensor_LO', 'NumberPhotons')
-                
-                if not self.check_section_key('RTC'):
-                    self.raiseMissingRequiredSec('RTC')
-                elif not self.check_config_key('RTC', 'SensorFrameRate_LO'):
-                    self.raiseMissingRequiredOpt('RTC', 'SensorFrameRate_LO')
+        #Verify the presence of parameters called in TIPTOP before they are verified
+        #in P3 or in MASTSEL
+        if not self.check_section_key('telescope'):
+            self.raiseMissingRequiredSec('telescope')
 
+        if not self.check_config_key('telescope','TelescopeDiameter'):
+            self.raiseMissingRequiredOpt('telescope','TelescopeDiameter')
+
+        if not self.check_config_key('telescope','glFocusOnNGS'):
+            self.my_data_map['telescope']['glFocusOnNGS'] = False
+
+        if not self.check_section_key('sources_science') :
+            self.raiseMissingRequiredSec('sources_science')
+
+        if not self.check_config_key('sources_science','Wavelength'):
+            self.raiseMissingRequiredOpt('sources_science', 'Wavelength')
+
+        if not self.check_config_key('sources_science','Zenith'):
+            #In P3.aoSystem this is optionnal, to remain consistent it is optionnal here too
+            self.my_data_map['sources_science']['Zenith'] = [0.0]
+
+        if not self.check_config_key('sources_science','Azimuth'):
+            #In P3.aoSystem this is optionnal, to remain consistent it is optionnal here too
+            self.my_data_map['sources_science']['Azimuth'] = [0.0]
+
+        if (len(self.my_data_map['sources_science']['Zenith']) !=
+            len(self.my_data_map['sources_science']['Azimuth'])):
+            self.raiseNotSameLength('sources_science', ['Zenith','Azimuth'])
+
+        # === Handle sensor_science.Super_Sampling parameter ===
+        if not self.check_config_key('sensor_science', 'Super_Sampling'):
+                self.my_data_map['sensor_science']['Super_Sampling'] = None
         else:
-            raise FileNotFoundError('No .yml or .ini can be found in '+ self.path)
+            # default Super_Sampling to option 2 (2D interpolation),
+            # keep option 1 (1D interpolation) available
+            SupSamp_val = self.my_data_map['sensor_science']['Super_Sampling']
+            # Case 1: user provides a single scalar
+            if isinstance(SupSamp_val, (int,float)):
+                self.my_data_map['sensor_science']['Super_Sampling'] = [float(SupSamp_val), 2]
+            # Case 2: user provides a list/tuple with one element
+            elif isinstance(SupSamp_val, (list, tuple)) and len(SupSamp_val) == 1:
+                self.my_data_map['sensor_science']['Super_Sampling'] = [float(SupSamp_val[0]), 2]
+            # Case 3: user explicitly provides [pixel_scale, option]
+            # Keep backward compatibility, option=1 (1D interpolation) still allowed
+            elif isinstance(SupSamp_val, (list, tuple)) and len(SupSamp_val) == 2:
+                if int(SupSamp_val[1]) not in (1, 2):
+                    raise ValueError("Second value of Super_Sampling must be 1 (1D interpolation) or 2 (2D polar grid).")
+            # Case 4: anything else is invalid
+            else:
+                raise KeyError("Super_Sampling must be a scalar or list of one/two values.")
+
+        #TODO should an error be raised if sensor_LO is defined but not source_LO or vice versa?
+        if self.check_section_key('sources_LO') and not self.check_section_key('sensor_LO'):
+            raise KeyError("'sensor_LO' must be defined if 'sources_LO' is defined.")
+        elif not self.check_section_key('sources_LO') and self.check_section_key('sensor_LO'):
+            raise KeyError("'sources_LO' must be defined if 'sensor_LO' is defined.")
+        #If both are defined we can proceed.
+        elif self.check_section_key('sources_LO') and self.check_section_key('sensor_LO'):
+            if not self.check_config_key('sources_LO', 'Wavelength'):
+                self.raiseMissingRequiredOpt('sources_LO', 'Wavelength')
+
+            if not self.check_config_key('sources_LO','Zenith'):
+                self.my_data_map['sources_LO']['Zenith'] = [0.0]
+
+            if not self.check_config_key('sources_LO','Azimuth'):
+                self.my_data_map['sources_LO']['Azimuth'] = [0.0]
+
+            if (len(self.my_data_map['sources_LO']['Zenith']) !=
+                len(self.my_data_map['sources_LO']['Azimuth'])):
+                self.raiseNotSameLength('sources_LO', ['Zenith','Azimuth'])
+
+            if not self.check_config_key('sensor_LO', 'NumberPhotons'):
+                raise self.raiseMissingRequiredOpt('sensor_LO', 'NumberPhotons')
+
+            if not self.check_section_key('RTC'):
+                self.raiseMissingRequiredSec('RTC')
+            elif not self.check_config_key('RTC', 'SensorFrameRate_LO'):
+                self.raiseMissingRequiredOpt('RTC', 'SensorFrameRate_LO')
 
         self.has_stage2 = any(key.endswith('_Stage2') for key in self.my_data_map.keys())
 
@@ -167,6 +170,7 @@ class baseSimulation(object):
         self.xxSciencePointigs         = self.pointings[0,:]
         self.yySciencePointigs         = self.pointings[1,:]
         self.psInMas = self.my_data_map['sensor_science']['PixelScale']
+        self.SupSamp = self.my_data_map['sensor_science']['Super_Sampling']
         # it checks if LO parameters are set and then it acts accordingly
         if 'sensor_LO' in self.my_data_map.keys():
             self.LOisOn = True
@@ -179,12 +183,42 @@ class baseSimulation(object):
         # initialize self.jitter_FWHM variable with a default value
         self.jitter_FWHM = None
         if 'jitter_FWHM' in self.my_data_map['telescope'].keys():
-            self.jitter_FWHM = self.my_data_map['telescope']['jitter_FWHM']  
+            self.jitter_FWHM = self.my_data_map['telescope']['jitter_FWHM']
 
         self.addFocusError = self.my_data_map['telescope']['glFocusOnNGS']
         self.GFinPSD = False
         if (not self.check_section_key('sensor_Focus')) and self.addFocusError and max(self.my_data_map['sensor_LO']['NumberLenslets']) == 1:
             raise ValueError("[telescope] glFocusOnNGS (that is focus correction with NGS) is available only if NGS/Focus WFSs have more than one sub-aperture")
+
+
+    def loadConfigurationFile(self, path=None, parametersFile=None):
+        """Load configuration from .ini or .yml file"""
+        if path is None:
+            path = self.path
+        if parametersFile is None:
+            parametersFile = self.parametersFile
+
+        # get the system description (stored in my_data_map) from the ini/yml file
+        fullPathFilename_ini = os.path.join(path, parametersFile + '.ini')
+        fullPathFilename_yml = os.path.join(path, parametersFile + '.yml')
+
+        if os.path.exists(fullPathFilename_yml):
+            self.fullPathFilename = fullPathFilename_yml
+            with open(fullPathFilename_yml) as f:
+                my_yaml_dict = yaml.safe_load(f)
+            self.my_data_map = my_yaml_dict
+        elif os.path.exists(fullPathFilename_ini):
+            self.fullPathFilename = fullPathFilename_ini
+            config = ConfigParser()
+            config.optionxform = str
+            config.read(fullPathFilename_ini)
+            self.my_data_map = {}
+            for section in config.sections():
+                self.my_data_map[section] = {}
+                for name,value in config.items(section):
+                    self.my_data_map[section].update({name:eval(value)})
+        else:
+            raise FileNotFoundError('No .yml or .ini (' + parametersFile + ') can be found in '+ path)
 
 
     def configLO(self, astIndex=None):
@@ -197,10 +231,13 @@ class baseSimulation(object):
         else:
             self.LO_wvl = LO_wvl_temp     # lambda
 
-        self.LO_psInMas         = self.my_data_map['sensor_LO']['PixelScale']
         self.LO_zen_field       = self.my_data_map['sources_LO']['Zenith']
         self.LO_az_field        = self.my_data_map['sources_LO']['Azimuth']
         self.LO_fluxes_field    = self.my_data_map['sensor_LO']['NumberPhotons']
+        self.LO_psInMas         = self.my_data_map['sensor_LO']['PixelScale']
+        # if self.LO_psInMas is a scalar makes a list on n elements
+        if not isinstance(self.LO_psInMas, list):
+            self.LO_psInMas = [self.LO_psInMas] * len(self.LO_zen_field)
         self.LO_freqs_field     = self.my_data_map['RTC']['SensorFrameRate_LO']
         if not isinstance(self.LO_freqs_field, list):
             self.LO_freqs_field = [self.LO_freqs_field] * len(self.LO_zen_field)
@@ -212,6 +249,9 @@ class baseSimulation(object):
         if self.check_section_key('sensor_Focus'):
             self.Focus_fluxes4s_field   = self.my_data_map['sensor_Focus']['NumberPhotons']
             self.Focus_psInMas          = self.my_data_map['sensor_Focus']['PixelScale']
+            # if self.Focus_psInMas is a scalar makes a list on n elements
+            if not isinstance(self.Focus_psInMas, list):
+                self.Focus_psInMas = [self.Focus_psInMas] * len(self.LO_zen_field)
             if self.check_section_key('sources_Focus'):
                 Focus_wvl_temp          = self.my_data_map['sources_Focus']['Wavelength']
             else:
@@ -275,31 +315,42 @@ class baseSimulation(object):
 
     def computePSF1D(self):
         psf1d = []
-        psf1d_radius = []
+        psf1d_radius = None
+        psf1d_radius_list_list = []
+        # === Precompute polar grid once if SupSamp flag ===
+        use_polar_interp = self.SupSamp and self.SupSamp[1] == 2
+        polar_grid = None
+        r_vals_interp = None
+        if use_polar_interp:
+            step_interp = self.SupSamp[0]
+            first_psf = self.cubeResults[0][0] if self.nWvl > 1 else self.cubeResults[0]
+            center = np.unravel_index(np.argmax(first_psf), first_psf.shape)
+            maxradius = self.psInMas * (first_psf.shape[0] / 2)
+            r_vals_interp, polar_grid = precompute_polar_grid(step=step_interp, pixelscale=self.psInMas,
+                                                              maxradius=maxradius, center=center)
         for i in range(self.nWvl):
             if self.nWvl>1:
                 cubeResults = self.cubeResults[i]
             else:
                 cubeResults = self.cubeResults
             psf1dList= []
-            psf1d_radiusList = []
+            psf1d_radius_list = []
             for psf in cubeResults:
                 psfRadius = psf.shape[0]/2
                 center = np.unravel_index(np.argmax(psf), psf.shape)
                 rr, radialprofile, ee = radial_profile(psf, ext=0, pixelscale=self.psInMas, ee=True,
                                                        center=center, stddev=False, binsize=None, maxradius=self.psInMas*psfRadius,
-                                                       normalize='total', pa_range=None, slice=0, nargout=2, verbose=self.verbose)
+                                                       normalize='total', pa_range=None, slice=0, nargout=2, supersamp=self.SupSamp, 
+                                                       polar_grid=polar_grid, r_vals=r_vals_interp, verbose=self.verbose)
                 psf1dList.append(radialprofile)
-                psf1d_radiusList.append(rr)
-            if self.nWvl>1:
-                psf1d.append(psf1dList)
-                psf1d_radius.append(psf1d_radiusList)
-            else:
-                psf1d = psf1dList
-                psf1d_radius = psf1d_radiusList
+                psf1d_radius = rr
+                psf1d_radius_list.append(rr)
+            psf1d.append(psf1dList)
+            psf1d_radius_list_list.append(psf1d_radius_list)
         self.psf1d = np.asarray(psf1d)
         self.psf1d_radius = np.asarray(psf1d_radius)
-        self.psf1d_data = np.vstack( (self.psf1d_radius, self.psf1d) )
+        self.psf1d_radius_list_list = np.asarray(psf1d_radius_list_list)
+        self.psf1d_data = np.vstack( (self.psf1d_radius_list_list, self.psf1d) )
 
 
     def savePSFprofileJSON(self):
@@ -437,6 +488,8 @@ class baseSimulation(object):
         hdr5['TIME'] = now.strftime("%Y%m%d_%H%M%S")
         hdr5['CONTENT'] = "Final PSFs profiles"
         hdr5['SIZE'] = str(self.psf1d_data.shape)
+        if self.SupSamp:
+            hdr5['SAMP_MAS'] = str(self.SupSamp[0])
 
         hdul1.writeto( os.path.join(self.outputDir, self.outputFile + '.fits'), overwrite=True)
         if self.verbose:
@@ -642,16 +695,13 @@ class baseSimulation(object):
         # pixel size for LO
         LO_PSFsInMas = psInMas*self.LO_wvl/self.wvlMax
 
-        # error messages for wrong pixel size
-        if LO_PSFsInMas > self.LO_psInMas:
-            extraOversampLO = np.ceil(self.LO_psInMas/LO_PSFsInMas)
-            overSampLO = overSamp * extraOversampLO
-            nLO = extraOversampLO*N
-            nPixPSFLO = extraOversampLO*nPixPSF
-            LO_PSFsInMas /= extraOversampLO
+        # skip reshape in psdSetToPsfSet to get a high sampling PSF if original sampling is low
+        if LO_PSFsInMas/np.min(self.LO_psInMas) > 1 and overSamp > 1:
+            skip_reshape = True
+            LO_PSFsInMas /= overSamp
+            nPixPSFLO = int(overSamp * nPixPSF)
         else:
-            overSampLO = overSamp
-            nLO = N
+            skip_reshape = False
             nPixPSFLO = nPixPSF
 
         # -----------------------------------------------------------------
@@ -670,8 +720,10 @@ class baseSimulation(object):
             # This is needed when the AsterismSelection has many more stars than the length of nSA.
             if len(nSA) == self.nNaturalGS_field:
                 nSAi = nSA[i]
+                len_nSA = len(nSA)
             else:
                 nSAi = nSA[0]
+                len_nSA = 1
             if nSAi != 1:
                 # piston filter for the sub-aperture size
                 pf = FourierUtils.pistonFilter(2*self.tel_radius/nSAi,k)
@@ -683,10 +735,10 @@ class baseSimulation(object):
         if self.verbose:
             print('******** LO PSF - NGS directions (1 sub-aperture)')
         psfLE_NGS = psdSetToPsfSet(psdNGS, maskLO,
-                                   self.LO_wvl, nLO, sx, grid_diameter,
+                                   self.LO_wvl, N, sx, grid_diameter,
                                    freq_range, dk, nPixPSFLO,
-                                   self.wvlMax, overSampLO,
-                                   opdMap=self.opdMap)
+                                   self.wvlMax, overSamp,
+                                   opdMap=self.opdMap, skip_reshape=skip_reshape)
 
         # -----------------------------------------------------------------
         # Merit functions
@@ -702,7 +754,7 @@ class baseSimulation(object):
             fwhmX,fwhmY = getFWHM(img.sampling, LO_PSFsInMas, method='contour', nargout=2)
             FWHM = np.sqrt(fwhmX*fwhmY) #average over major and minor axes
             self.NGS_FWHM_mas_field.append(FWHM)
-            if FWHM >= nLO*LO_PSFsInMas:
+            if 2*FWHM >= nPixPSFLO*LO_PSFsInMas:
                 ee_NGS = 1
             else:
                 ee_,rr_ = getEncircledEnergy(img.sampling, pixelscale=LO_PSFsInMas,
@@ -711,7 +763,11 @@ class baseSimulation(object):
                 ee_at_radius_fn = interp1d(rr_, ee_, kind='cubic', bounds_error=False)
                 # max is used to compute EE on at least a radius of one pixel
                 # min is used to avoid nan being returned if FWHM is larger than radial profile
-                ee_NGS = ee_at_radius_fn(min([rr_[-1],max([FWHM,self.LO_psInMas])]))
+                if isinstance(self.LO_psInMas,list):
+                    LO_psInMas_i = self.LO_psInMas[idx]
+                else:
+                    LO_psInMas_i = self.LO_psInMas
+                ee_NGS = ee_at_radius_fn(min([rr_[-1],max([FWHM,LO_psInMas_i])]))
             self.NGS_EE_field.append(ee_NGS)
             if self.verbose:
                 print('SR(@',int(self.LO_wvl*1e9),'nm)        :', "%.5f" % SR)
@@ -723,16 +779,25 @@ class baseSimulation(object):
             if self.verbose:
                 print('Adding aliasing error on LO!')
             # DIFFRACTION LIMITED PSD and PSF
-            psdDL = Field(self.LO_wvl, nLO, freq_range, 'rad')
-            maskField = Field(self.LO_wvl, nLO, grid_diameter)
             if isinstance(maskLO, list):
-                maskField.sampling = congrid(maskLO[i], [sx, sx])
+                self.NGS_DL_FWHM_mas = []
             else:
-                maskField.sampling = congrid(maskLO, [sx, sx])
-            maskField.sampling = zeroPad(maskField.sampling, (nLO-sx)//2)
-            psfNgsDL = longExposurePsf(maskField, psdDL)
-            fwhmX,fwhmY  = getFWHM( psfNgsDL.sampling, LO_PSFsInMas, method='contour', nargout=2)
-            self.NGS_DL_FWHM_mas = np.sqrt(fwhmX*fwhmY)
+                self.NGS_DL_FWHM_mas = None
+            for i in range(len_nSA):
+                if isinstance(maskLO, list):
+                    maskI = maskLO[i]
+                else:
+                    maskI = maskLO
+                psdDL = Field(self.LO_wvl, N, freq_range, 'rad')
+                maskField = Field(self.LO_wvl, N, grid_diameter)
+                maskField.sampling = congrid(maskI, [sx, sx])
+                maskField.sampling = zeroPad(maskField.sampling, (N-sx)//2)
+                psfNgsDL = longExposurePsf(maskField, psdDL)
+                fwhmX,fwhmY  = getFWHM( psfNgsDL.sampling, LO_PSFsInMas, method='contour', nargout=2)
+                if self.NGS_DL_FWHM_mas is None:
+                    self.NGS_DL_FWHM_mas = np.sqrt(fwhmX*fwhmY)
+                else:
+                    self.NGS_DL_FWHM_mas.append(np.sqrt(fwhmX*fwhmY))
         else:
             self.NGS_DL_FWHM_mas = None
 
@@ -740,18 +805,16 @@ class baseSimulation(object):
         # optional Focus error
         if self.addFocusError:
             # pixel size for Focus
-            Focus_PSFsInMas = self.psInMas*self.Focus_wvl/self.wvlMax
-            # error messages for wrong pixel size
-            if Focus_PSFsInMas > self.Focus_psInMas:
-                extraOversampFocus = np.ceil(self.Focus_psInMas/Focus_PSFsInMas)
-                overSampFocus = self.overSamp * extraOversampFocus
-                nFocus = extraOversampFocus*N
-                nPixPSFFocus = extraOversampFocus*self.nPixPSF
-                Focus_PSFsInMas /= extraOversampFocus
+            Focus_PSFsInMas = psInMas*self.Focus_wvl/self.wvlMax
+
+            # skip reshape in psdSetToPsfSet to get a high sampling PSF if original sampling is low
+            if Focus_PSFsInMas/np.min(self.Focus_psInMas) > 1 and overSamp > 1:
+                skip_reshape = True
+                Focus_PSFsInMas /= overSamp
+                nPixPSFFocus = int(overSamp * nPixPSF)
             else:
-                overSampFocus = self.overSamp
-                nFocus = self.N
-                nPixPSFFocus = self.nPixPSF
+                skip_reshape = False
+                nPixPSFFocus = nPixPSF
 
             if 'sensor_Focus' in self.my_data_map.keys():
                 if self.verbose:
@@ -782,10 +845,10 @@ class baseSimulation(object):
                 if self.verbose:
                     print('******** Focus Sensor PSF - NGS directions (1 sub-aperture)')
                 psfLE_Focus = psdSetToPsfSet(psdFocus, maskFocus,
-                                             self.Focus_wvl, nFocus, self.sx, self.grid_diameter,
-                                             self.freq_range, self.dk, nPixPSFFocus,
-                                             self.wvlMax, overSampFocus,
-                                             opdMap=self.opdMap)
+                                             self.Focus_wvl, N, sx, grid_diameter,
+                                             freq_range, dk, nPixPSFFocus,
+                                             self.wvlMax, overSamp,
+                                             opdMap=self.opdMap, skip_reshape=skip_reshape)
 
                 # -----------------------------------------------------------------
                 ## Merit functions
@@ -801,7 +864,7 @@ class baseSimulation(object):
                     fwhmX,fwhmY = getFWHM(img.sampling, Focus_PSFsInMas, method='contour', nargout=2)
                     FWHM = np.sqrt(fwhmX*fwhmY) #average over major and minor axes
                     self.Focus_FWHM_mas_field.append(FWHM)
-                    if FWHM >= nFocus*Focus_PSFsInMas:
+                    if 2*FWHM >= nPixPSFFocus*Focus_PSFsInMas:
                         ee_Focus = 1
                     else:
                         ee_,rr_ = getEncircledEnergy(img.sampling, pixelscale=Focus_PSFsInMas,
@@ -809,7 +872,11 @@ class baseSimulation(object):
                         ee_ *= 1/np.max(ee_)
                         ee_at_radius_fn = interp1d(rr_, ee_, kind='cubic', bounds_error=False)
                         # max is used to compute EE on at least a radius of one pixel
-                        ee_Focus = ee_at_radius_fn(max([FWHM,self.Focus_psInMas]))
+                        if isinstance(self.Focus_psInMas,list):
+                            Focus_psInMas_i = self.Focus_psInMas[idx]
+                        else:
+                            Focus_psInMas_i = self.Focus_psInMas
+                        ee_Focus = ee_at_radius_fn(max([FWHM,Focus_psInMas_i]))
                     self.Focus_EE_field.append(ee_Focus)
                     if self.verbose:
                         print('SR(@',int(self.Focus_wvl*1e9),'nm)        :', "%.5f" % SR)
@@ -883,9 +950,9 @@ class baseSimulation(object):
 
     def doOverallSimulation(self, astIndex=None, skipMerit=False, skipPSF1D=False):
 
-        if self.LOisOn:        
+        if self.LOisOn:
             self.configLO(astIndex)
-        
+
         self.results = []
 
         # ------------------------------------------------------------
@@ -903,7 +970,7 @@ class baseSimulation(object):
                                , display=False, getPSDatNGSpositions=self.LOisOn
                                , computeFocalAnisoCov=False, TiltFilter=self.LOisOn
                                , getErrorBreakDown=self.getHoErrorBreakDown, doComputations=False
-                               , psdExpansion=True)
+                               , psdExpansion=True, reduce_memory=True)
 
             if 'sensor_LO' in self.my_data_map.keys():
                 self.fao.my_data_map['sensor_LO']['NumberPhotons'] = self.my_data_map['sensor_LO']['NumberPhotons']
@@ -927,10 +994,10 @@ class baseSimulation(object):
                 self.ngs_psInMas       = cpuArray(self.ngs_fao.freq.psInMas[0])
                 self.ngs_nPixPSF       = self.my_data_map['sensor_science']['FieldOfView']
                 self.ngs_overSamp      = int(self.ngs_fao.freq.kRef_)
-                self.ngs_freq_range    = self.ngs_N*self.ngs_fao.freq.PSDstep
-                self.ngs_pitch         = 1/self.ngs_freq_range
-                self.ngs_grid_diameter = self.ngs_pitch*self.ngs_N
-                self.ngs_sx            = int(2*np.round(self.tel_radius/self.ngs_pitch))
+                self.ngs_PSDstep       = self.ngs_fao.freq.PSDstep
+                self.ngs_freq_range    = self.ngs_N*self.ngs_PSDstep
+                self.ngs_grid_diameter = 1/self.ngs_PSDstep
+                self.ngs_sx            = int(2*np.round(self.tel_radius*self.ngs_freq_range))
                 self.ngs_dk            = 1e9*self.ngs_fao.freq.kcMax_/self.ngs_fao.freq.resAO
                 self.ngs_wvlRef        = self.ngs_fao.freq.wvlRef
 
@@ -946,10 +1013,10 @@ class baseSimulation(object):
             self.nPointings    = self.pointings.shape[1]
             self.nPixPSF       = self.my_data_map['sensor_science']['FieldOfView']
             self.overSamp      = int(self.fao.freq.kRef_)
-            self.freq_range    = self.N*self.fao.freq.PSDstep
-            self.pitch         = 1/self.freq_range
-            self.grid_diameter = self.pitch*self.N
-            self.sx            = int(2*np.round(self.tel_radius/self.pitch))
+            self.PSDstep       = self.fao.freq.PSDstep
+            self.freq_range    = self.N*self.PSDstep
+            self.grid_diameter = 1/self.PSDstep
+            self.sx            = int(2*np.round(self.tel_radius*self.freq_range))
             # dk is the same as in p3.aoSystem.powerSpectrumDensity except that it is multiplied by 1e9 instead of 2.
             self.dk            = 1e9*self.fao.freq.kcMax_/self.fao.freq.resAO
             # wvlRef from P3 is required to scale correctly the OL PSD from rad to m
@@ -969,7 +1036,7 @@ class baseSimulation(object):
                 self.opdMap = None
 
             if self.verbose:
-                print('PSD step:', self.fao.freq.PSDstep)
+                print('PSD step:', self.PSDstep)
                 print('PSD freq range:', self.freq_range)
                 print('PSD shape:', self.PSD.shape)
                 print('oversampling:', self.overSamp)
@@ -980,11 +1047,11 @@ class baseSimulation(object):
             if self.LOisOn:
                 if self.verbose:
                     print('******** LO PART')
-                    
+
                 # ------------------------------------------------------------------------
                 # --- NGS PSDs, PSFs and merit functions on PSFs
                 self.ngsPSF()
-                
+
                 # ------------------------------------------------------------------------
                 # --- initialize MASTSEL MavisLO object
                 self.mLO = MavisLO(self.path, self.parametersFile, verbose=self.verbose)
@@ -1022,7 +1089,7 @@ class baseSimulation(object):
                         PSDho += self.GF_res**2 * FocusFilter
                     self.GFinPSD = True
                 # ---------------------------------------------------------------------
-            else:                  
+            else:
                 if self.firstSimCall:
                     self.mLO.computeTotalResidualMatrix(np.array(self.cartSciencePointingCoords),
                                                         self.cartNGSCoords_field, self.NGS_fluxes_field,
@@ -1046,7 +1113,7 @@ class baseSimulation(object):
                                                                   np.array(self.cartSciencePointingCoords),
                                                                   np.array(self.cartNGSCoords_asterism),
                                                                   self.NGS_fluxes_asterism)
-                
+
                 # --------------------------------------------------------------------
                 # --- optional total focus covariance matrix Ctot
                 if self.addFocusError:

@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "astro-tiptop"
 authors = [
     {name = "Fabio Rossi", email = "fabio.rossi@inaf.it"},
+    {name = "Guido Agapito", email = "guido.agapito@inaf.it"},
 ]
 description = "Analytical simulator for astronomical adaptive optics systems"
 readme = "README.md"
