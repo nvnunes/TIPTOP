@@ -52,6 +52,8 @@ class AbstractSimulation(ABC):
         self.savePSDs = savePSDs
         self.ensquaredEnergy = ensquaredEnergy
         self.eeRadiusInMas = eeRadiusInMas
+        self.skipMerit = False
+        self.skipPSF1D = False
 
         # Standardized Universal Data Containers (To be populated by subclasses)
         self.HO_res = None
@@ -197,12 +199,25 @@ class AbstractSimulation(ABC):
     # --- TEMPLATE METHOD (The Core Architecture) ---
     # ----------------------------------------------------------------------------
 
-    def doOverallSimulation(self, astIndex=None):
+    def doOverallSimulation(self, astIndex=None, skipMerit=False, skipPSF1D=False):
         """
-        TEMPLATE METHOD: Orchestrates the entire simulation lifecycle.
-        It calls abstract methods that MUST be implemented by subclasses (P3 or TipTorch).
-        This guarantees strict architectural consistency across backends.
+        Run the simulation with optional science FWHM and radial profiles.
+
+        skipMerit omits the HO science FWHM used by approximate merit
+        calculations; NGS metrics required by LO reconstruction are retained.
+        skipPSF1D omits the science radial profiles. Both default to False
+        on every call and leave PSF generation unchanged. Skipped products
+        are cleared rather than exposing values from a previous run.
         """
+        self.skipMerit = skipMerit
+        self.skipPSF1D = skipPSF1D
+        if skipMerit:
+            self.pointings_FWHM_mas = None
+        if skipPSF1D:
+            self.psf1d_data = None
+            self.psf1d = None
+            self.psf1d_radius = None
+
         # 1. Config LO parameters (if active)
         self._configure_LO_parameters(astIndex)
         

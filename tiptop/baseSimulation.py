@@ -363,29 +363,30 @@ class baseSimulation(AbstractSimulation):
                 # Safely compute HO residuals
                 self.HO_res = np.sqrt(np.sum(self.PSD[0:self.nPointings], axis=(1, 2)))
 
-            self.pointings_FWHM_mas = []
-            for i in range(self.nWvl):
-                psfList = psfLongExpPointingsArr[i] if self.nWvl > 1 else psfLongExpPointingsArr
-                psd_i = PSD_HO[i] if self.multiGridPSD else PSD_HO
-                wvl_c = self.wvl[i] if self.nWvl > 1 else self.wvl[0]
-                samp_i = wvl_c * rad2mas / (self.psInMas * 2 * self.tel_radius)
-                rebin_i = max(1, int(np.ceil(2.0 / samp_i))) if samp_i < 2.0 else 1
-                fwhmList = []
-                for idx, img in enumerate(psfList):
-                    fwhmX, fwhmY = getFWHM(arrayMastseltoP3(img.sampling), self.psInMas, method='contour',
-                                           rebin=rebin_i, nargout=2)
-                    fwhm = np.sqrt(fwhmX * fwhmY)
-                    fwhmList.append(fwhm)
-                    if self.verbose:
-                        s1 = cpuArray(psd_i[idx]).sum()
-                        sr = np.exp(-s1 * (2*np.pi*1e-9/wvl_c)**2)
-                        print(f'SR(@{int(wvl_c*1e9)}nm)        : {sr:.5f}')
-                        print(f'FWHM(@{int(wvl_c*1e9)}nm) [mas]: {fwhm:.3f}')
+            if not self.skipMerit:
+                self.pointings_FWHM_mas = []
+                for i in range(self.nWvl):
+                    psfList = psfLongExpPointingsArr[i] if self.nWvl > 1 else psfLongExpPointingsArr
+                    psd_i = PSD_HO[i] if self.multiGridPSD else PSD_HO
+                    wvl_c = self.wvl[i] if self.nWvl > 1 else self.wvl[0]
+                    samp_i = wvl_c * rad2mas / (self.psInMas * 2 * self.tel_radius)
+                    rebin_i = max(1, int(np.ceil(2.0 / samp_i))) if samp_i < 2.0 else 1
+                    fwhmList = []
+                    for idx, img in enumerate(psfList):
+                        fwhmX, fwhmY = getFWHM(arrayMastseltoP3(img.sampling), self.psInMas, method='contour',
+                                               rebin=rebin_i, nargout=2)
+                        fwhm = np.sqrt(fwhmX * fwhmY)
+                        fwhmList.append(fwhm)
+                        if self.verbose:
+                            s1 = cpuArray(psd_i[idx]).sum()
+                            sr = np.exp(-s1 * (2*np.pi*1e-9/wvl_c)**2)
+                            print(f'SR(@{int(wvl_c*1e9)}nm)        : {sr:.5f}')
+                            print(f'FWHM(@{int(wvl_c*1e9)}nm) [mas]: {fwhm:.3f}')
 
-                if self.nWvl > 1:
-                    self.pointings_FWHM_mas.append(fwhmList)
-                else:
-                    self.pointings_FWHM_mas = fwhmList
+                    if self.nWvl > 1:
+                        self.pointings_FWHM_mas.append(fwhmList)
+                    else:
+                        self.pointings_FWHM_mas = fwhmList
 
             self.psfLongExpPointingsArr = psfLongExpPointingsArr
 
@@ -444,8 +445,12 @@ class baseSimulation(AbstractSimulation):
         if self.savePSDs:
             self.psd_array = cpuArray(self.PSD)
 
-        # MANDATORY: Generate 1D radial profiles
-        self.computePSF1D()
+        if self.skipPSF1D:
+            # radial_profile normally applies this cube scaling in place.
+            # Keep Field results untouched for conserved-flux consumers.
+            self.cubeResultsArray /= self.cubeResultsArray.sum(axis=(-2, -1), keepdims=True)
+        else:
+            self.computePSF1D()
 
         if self.verbose:
             print('HO_res [nm]:', self.HO_res)
