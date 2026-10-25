@@ -10,7 +10,7 @@ import pytest
 from tiptop.baseSimulation import baseSimulation
 
 
-def _simulation(path, lo_on):
+def _simulation(path, lo_on, *, config_updates=None, **kwargs):
     path.mkdir(exist_ok=True, parents=True)
     parser = ConfigParser()
     parser.optionxform = str
@@ -33,10 +33,13 @@ def _simulation(path, lo_on):
     if not lo_on:
         parser.remove_section('sensor_LO')
         parser.remove_section('sources_LO')
+    for section, values in (config_updates or {}).items():
+        for key, value in values.items():
+            parser.set(section, key, value)
     with (path / 'optional.ini').open('w') as stream:
         parser.write(stream)
     return baseSimulation(str(path), 'optional', str(path), 'unused', doPlot=False,
-                          getHoErrorBreakDown=True)
+                          getHoErrorBreakDown=True, **kwargs)
 
 
 @pytest.fixture(scope='module', params=[False, True], ids=['ho-only', 'ho-lo'])

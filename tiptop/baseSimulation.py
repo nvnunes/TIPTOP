@@ -28,12 +28,18 @@ class baseSimulation(AbstractSimulation):
     """
     P3-based Backend Implementation for TIPTOP Simulations.
     Inherits the strict lifecycle template from AbstractSimulation.
+
+    fullFluxNormalization=True opts science/reference PSFs into complete-plane
+    unit-flux normalization. Crops retain their enclosed fraction through LO
+    and jitter convolution and optional profile computation. The default False
+    preserves existing output behavior. This option requires MASTSEL's
+    full_flux propagation and normalize_input convolution APIs.
     """
 
     def __init__(self, path, parametersFile, outputDir, outputFile, doConvolve=True,
                  doPlot=False, addSrAndFwhm=True, verbose=False, getHoErrorBreakDown=False,
                  savePSDs=False, ensquaredEnergy=False, eeRadiusInMas=50,
-                 exactMultiWavelengthPSD=False):
+                 exactMultiWavelengthPSD=False, fullFluxNormalization=False):
 
         # Superclass handles all configuration loading, validation, and standard properties
         super().__init__(path, parametersFile, outputDir, outputFile, doConvolve,
@@ -53,6 +59,9 @@ class baseSimulation(AbstractSimulation):
         # are recomputed per wavelength too). Defaults to False: zero change
         # in behaviour or cost for existing configurations.
         self.exactMultiWavelengthPSD = exactMultiWavelengthPSD
+        # True marks science outputs as fractions of complete propagation power.
+        # Convolution and optional profiles retain this scale; crops may sum < 1.
+        self.fullFluxNormalization = fullFluxNormalization
 
     # ----------------------------------------------------------------------------
     # --- IMPLEMENTATION OF ABSTRACT METHODS ---
@@ -328,6 +337,7 @@ class baseSimulation(AbstractSimulation):
         """
         Convolves PSDs and standardizes the output in self.cubeResultsArray.
         """
+        flux_options = {'full_flux': True} if self.fullFluxNormalization else {}
         if astIndex is None or self.firstSimCall:
             mask = arrayP3toMastsel(self.fao.ao.tel.pupil)
 
@@ -343,7 +353,7 @@ class baseSimulation(AbstractSimulation):
                 psfLongExpPointingsArr = psdSetToPsfSet(
                     PSD_HO, mask, self.wvl, nPixPup=self.sx_per_wvl,
                     freq_range=self.freq_range_per_wvl, dk=self.dk_per_wvl,
-                    nPixPsf=self.nPixPSF, opdMap=self.opdMap,
+                    nPixPsf=self.nPixPSF, opdMap=self.opdMap, **flux_options,
                 )
                 # HO_res (WFE in nm) is physically wavelength-independent;
                 # any grid gives the same value up to the numerical-resolution
@@ -358,7 +368,7 @@ class baseSimulation(AbstractSimulation):
                                                         nPixPup=self.sx, freq_range=self.freq_range,
                                                         dk=self.dk, nPixPsf=self.nPixPSF,
                                                         oversampling=self.overSamp,
-                                                        opdMap=self.opdMap)
+                                                        opdMap=self.opdMap, **flux_options)
 
                 # Safely compute HO residuals
                 self.HO_res = np.sqrt(np.sum(self.PSD[0:self.nPointings], axis=(1, 2)))
@@ -422,6 +432,7 @@ class baseSimulation(AbstractSimulation):
         """
         if astIndex is not None:
             return
+        flux_options = {'full_flux': True} if self.fullFluxNormalization else {}
 
         # OPEN-LOOP PSD
         spectrum = arrayP3toMastsel(self._open_loop_psd())
@@ -432,14 +443,16 @@ class baseSimulation(AbstractSimulation):
 
         psfOL = psdSetToPsfSet([psdOL.sampling], mask, self.wvlRef,
                                nPixPup=self.sx, freq_range=self.freq_range,
-                               dk=self.dk, nPixPsf=self.nPixPSF, oversampling=self.overSamp)
+                               dk=self.dk, nPixPsf=self.nPixPSF, oversampling=self.overSamp,
+                               **flux_options)
         self.psf_ol_array = cpuArray(psfOL[0].sampling)
 
         # DIFFRACTION LIMITED PSD
         psdDL = Field(self.wvlRef, self.N, self.freq_range, 'rad')
         psfDL = psdSetToPsfSet([psdDL.sampling], mask, self.wvlRef,
                                nPixPup=self.sx, freq_range=self.freq_range,
-                               dk=self.dk, nPixPsf=self.nPixPSF, oversampling=self.overSamp)
+                               dk=self.dk, nPixPsf=self.nPixPSF, oversampling=self.overSamp,
+                               **flux_options)
         self.psf_dl_array = cpuArray(psfDL[0].sampling)
 
         if self.savePSDs:
@@ -448,7 +461,8 @@ class baseSimulation(AbstractSimulation):
         if self.skipPSF1D:
             # radial_profile normally applies this cube scaling in place.
             # Keep Field results untouched for conserved-flux consumers.
-            self.cubeResultsArray /= self.cubeResultsArray.sum(axis=(-2, -1), keepdims=True)
+            if not self.fullFluxNormalization:
+                self.cubeResultsArray /= self.cubeResultsArray.sum(axis=(-2, -1), keepdims=True)
         else:
             self.computePSF1D()
 
@@ -719,9 +733,9 @@ class baseSimulation(AbstractSimulation):
             psfList = self.psfLongExpPointingsArr[i] if self.nWvl > 1 else self.psfLongExpPointingsArr
             resultList = []
             for psfLongExp, resSpec, resSpecJ in zip(psfList, resSpecList, resSpecListJ):
-                temp = convolve(psfLongExp, resSpec)
+                temp = self._convolve_science_psf(psfLongExp, resSpec)
                 if self.jitter_FWHM is not None:
-                    temp = convolve(temp, resSpecJ)
+                    temp = self._convolve_science_psf(temp, resSpecJ)
                 resultList.append(temp)
 
             if self.nWvl > 1:
@@ -748,9 +762,16 @@ class baseSimulation(AbstractSimulation):
             psfList = self.psfLongExpPointingsArr[i] if self.nWvl > 1 else self.psfLongExpPointingsArr
             resultList = []
             for psfLongExp in psfList:
-                resultList.append(convolve(psfLongExp, resSpecJ) if self.jitter_FWHM is not None else psfLongExp)
+                resultList.append(self._convolve_science_psf(psfLongExp, resSpecJ)
+                                  if self.jitter_FWHM is not None else psfLongExp)
 
             if self.nWvl > 1:
                 self.results.append(resultList)
             else:
                 self.results = resultList
+
+    def _convolve_science_psf(self, psf, kernel):
+        """Select MASTSEL's explicit input-normalization contract."""
+        if self.fullFluxNormalization:
+            return convolve(psf, kernel, normalize_input=False)
+        return convolve(psf, kernel)
