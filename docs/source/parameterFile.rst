@@ -356,6 +356,32 @@ We now go more in detail for each section:
 [sensor_HO]
 -----------
 
+``TipTiltRemoval`` selects the P3 backend's tilt treatment:
+
+* ``'auto'`` (default): use ``'spectral'`` when ``[sensor_LO]`` is present,
+  otherwise ``'none'``. This preserves existing behavior.
+* ``'none'``: retain tilt in the residual spectrum and optical calculation.
+* ``'spectral'``: apply P3's existing approximate PSD tilt filter, independently
+  of whether LO processing is enabled.
+* ``'pupil_fit'``: request optical residual power from P3 before the
+  variance-only piston factors on the main residual and aliases, fit two ramps on the actual
+  full telescope pupil, and average the projected Gaussian coherence through
+  the native optics. Static OPD tilt is removed by the same fit, matching a fit
+  after NCPA is added. The existing PSF resampling, flux and LO convolution
+  contracts are retained. This optional path uses CPU pupil-pair integration.
+
+Set, for example, ``TipTiltRemoval = 'pupil_fit'`` under ``[sensor_HO]`` for an
+HO-only fitted-pupil prediction. Explicit choices are independent of LO
+availability. The replaced ``FilterTipTilt`` name is rejected; it is not an
+alias. P3's ``PSD`` and component error budget retain their variance-reporting
+convention. Its separate ``opticalPSD`` supplies the covariance input to
+MASTSEL only for ``'pupil_fit'``. Reconstruction weights and the other tilt
+selections are unchanged. TIPTOP's ``HO_res`` and NGS/focus Strehl estimates use the
+projected dynamic phase variance returned by the optical calculation.
+That metadata is a pupil-weighted post-tilt phase variance; it is distinct
+from P3's piston-filtered component budget. Do not interpret an integral of
+the unfiltered optical power as a piston-removed wavefront variance.
+
 The High Order WaveFront Sensor can be a pyramid WFS or a Shack-Hartmann. Regardless of the WFS, the following parameters can de defined.
 
 +-------------------------+---------+--------+--------------------------------------------------------------------------+
@@ -545,7 +571,7 @@ Can be set but not used
 +-------------------------+---------+--------+--------------------------------------------------------------------------+
 
 [sensor_Focus]
------------
+--------------
 
 .. note::
 

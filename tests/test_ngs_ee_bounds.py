@@ -24,7 +24,7 @@ def _ngs_state(detector_scale):
         fao=SimpleNamespace(freq=SimpleNamespace(k2_=np.zeros((n, n))),
                             ao=SimpleNamespace(tel=SimpleNamespace(pupil=pupil))),
         my_data_map={'sensor_LO': {'NumberLenslets': [1]}},
-        tel_radius=4.0, opdMap=None, verbose=False,
+        tel_radius=4.0, opdMap=None, verbose=False, tipTiltRemoval='spectral',
         addLoAlias=False, addFocusError=False,
     )
 

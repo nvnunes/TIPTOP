@@ -34,6 +34,12 @@ class baseSimulation(AbstractSimulation):
     and jitter convolution and optional profile computation. The default False
     preserves existing output behavior. This option requires MASTSEL's
     full_flux propagation and normalize_input convolution APIs.
+
+    sensor_HO.TipTiltRemoval selects 'auto' (default), 'none', 'spectral', or
+    'pupil_fit'. Auto preserves the LO-dependent default: spectral with LO on,
+    none with LO off. Explicit methods are independent of LO availability.
+    Pupil-fit projects Gaussian phase covariance and static phase onto the
+    complement of the two actual-pupil tilt ramps in MASTSEL's native optics.
     """
 
     def __init__(self, path, parametersFile, outputDir, outputFile, doConvolve=True,
@@ -62,6 +68,12 @@ class baseSimulation(AbstractSimulation):
         # True marks science outputs as fractions of complete propagation power.
         # Convolution and optional profiles retain this scale; crops may sum < 1.
         self.fullFluxNormalization = fullFluxNormalization
+        if 'FilterTipTilt' in self.my_data_map['sensor_HO']:
+            raise ValueError('FilterTipTilt is replaced by sensor_HO.TipTiltRemoval')
+        method = self.my_data_map['sensor_HO'].get('TipTiltRemoval', 'auto')
+        if not isinstance(method, str) or method not in ('auto', 'none', 'spectral', 'pupil_fit'):
+            raise ValueError("sensor_HO.TipTiltRemoval must be 'auto', 'none', 'spectral' or 'pupil_fit'")
+        self.tipTiltRemoval = ('spectral' if self.LOisOn else 'none') if method == 'auto' else method
 
     # ----------------------------------------------------------------------------
     # --- IMPLEMENTATION OF ABSTRACT METHODS ---
@@ -147,7 +159,9 @@ class baseSimulation(AbstractSimulation):
         # without re-reading the file. path_root lets P3 resolve 'tiptop/...' aux files.
         self.fao = fourierModel(self.fullPathFilename, calcPSF=False, verbose=self.verbose,
                                 display=False, getPSDatNGSpositions=self.LOisOn,
-                                computeFocalAnisoCov=False, TiltFilter=self.LOisOn,
+                                computeFocalAnisoCov=False,
+                                TiltFilter=self.tipTiltRemoval == 'spectral',
+                                computeOpticalPSD=self.tipTiltRemoval == 'pupil_fit',
                                 getErrorBreakDown=self.getHoErrorBreakDown, doComputations=False,
                                 psdExpansion=True, psdPerWavelength=self.exactMultiWavelengthPSD,
                                 reduce_memory=True,
@@ -176,10 +190,13 @@ class baseSimulation(AbstractSimulation):
         # default, and the only case before this feature existed) it stays a
         # single (nOtf,nOtf,nSrc) array, exactly as today.
         self.multiGridPSD = isinstance(self.fao.PSD, list)
+        # Component variance reporting retains P3's convention. Finite-pupil
+        # optics consume stationary main/alias power before variance filtering.
+        optical_psd = self.fao.opticalPSD if self.tipTiltRemoval == 'pupil_fit' else self.fao.PSD
         if self.multiGridPSD:
-            self.PSD = [p.transpose() for p in self.fao.PSD]
+            self.PSD = [p.transpose() for p in optical_psd]
         else:
-            self.PSD = self.fao.PSD.transpose()
+            self.PSD = optical_psd.transpose()
 
         # N/PSDstep/freq_range/grid_diameter/dk/mask always describe P3's
         # *shared* grid (self.fao.freq, unaffected by wvl_grids -- see
@@ -337,7 +354,9 @@ class baseSimulation(AbstractSimulation):
         """
         Convolves PSDs and standardizes the output in self.cubeResultsArray.
         """
-        flux_options = {'full_flux': True} if self.fullFluxNormalization else {}
+        psf_options = {'full_flux': True} if self.fullFluxNormalization else {}
+        if self.tipTiltRemoval == 'pupil_fit':
+            psf_options['tip_tilt_removal'] = 'pupil_fit'
         if astIndex is None or self.firstSimCall:
             mask = arrayP3toMastsel(self.fao.ao.tel.pupil)
 
@@ -353,7 +372,7 @@ class baseSimulation(AbstractSimulation):
                 psfLongExpPointingsArr = psdSetToPsfSet(
                     PSD_HO, mask, self.wvl, nPixPup=self.sx_per_wvl,
                     freq_range=self.freq_range_per_wvl, dk=self.dk_per_wvl,
-                    nPixPsf=self.nPixPSF, opdMap=self.opdMap, **flux_options,
+                    nPixPsf=self.nPixPSF, opdMap=self.opdMap, **psf_options,
                 )
                 # HO_res (WFE in nm) is physically wavelength-independent;
                 # any grid gives the same value up to the numerical-resolution
@@ -368,10 +387,15 @@ class baseSimulation(AbstractSimulation):
                                                         nPixPup=self.sx, freq_range=self.freq_range,
                                                         dk=self.dk, nPixPsf=self.nPixPSF,
                                                         oversampling=self.overSamp,
-                                                        opdMap=self.opdMap, **flux_options)
+                                                        opdMap=self.opdMap, **psf_options)
 
                 # Safely compute HO residuals
                 self.HO_res = np.sqrt(np.sum(self.PSD[0:self.nPointings], axis=(1, 2)))
+
+            if self.tipTiltRemoval == 'pupil_fit':
+                reference_psfs = (psfLongExpPointingsArr[int(np.argmin(self.wvl))]
+                                  if self.nWvl > 1 else psfLongExpPointingsArr)
+                self.HO_res = np.sqrt([img.residual_phase_variance for img in reference_psfs]) * self.wvlRef * 1e9 / (2 * np.pi)
 
             if not self.skipMerit:
                 self.pointings_FWHM_mas = []
@@ -596,6 +620,10 @@ class baseSimulation(AbstractSimulation):
             ngs_nPixPup = self.sx
 
         psdNGS_view = arrayP3toMastsel(psd_source[-self.nNaturalGS_field:])
+        ngs_optics = {}
+        if self.tipTiltRemoval == 'pupil_fit':
+            ngs_optics = {'tip_tilt_removal': 'pupil_fit',
+                          'tilt_fit_pupil': arrayP3toMastsel(self.fao.ao.tel.pupil)}
 
         psdNGS = []
 
@@ -616,12 +644,13 @@ class baseSimulation(AbstractSimulation):
         psfLE_NGS = psdSetToPsfSet(psdNGS, maskLO, self.LO_wvl,
                                    nPixPup=ngs_nPixPup, freq_range=ngs_freq_range,
                                    dk=ngs_dk, nPixPsf=nPixPSFLO, oversampling=lo_oversampling,
-                                   opdMap=self.opdMap)
+                                   opdMap=self.opdMap, **ngs_optics)
 
         self.NGS_SR_field, self.NGS_FWHM_mas_field, self.NGS_EE_field = [], [], []
         for idx, img in enumerate(psfLE_NGS):
             s1 = cpuArray(psdNGS[idx]).sum()
-            SR = np.exp(-s1 * (2*np.pi*1e-9/self.LO_wvl)**2)
+            SR = (np.exp(-img.residual_phase_variance) if self.tipTiltRemoval == 'pupil_fit'
+                  else np.exp(-s1 * (2*np.pi*1e-9/self.LO_wvl)**2))
             self.NGS_SR_field.append(SR)
 
             fwhmX, fwhmY = getFWHM(arrayMastseltoP3(img.sampling), LO_PSFsInMas, method='contour', nargout=2)
@@ -685,12 +714,14 @@ class baseSimulation(AbstractSimulation):
                                              nPixPup=ngs_nPixPup, freq_range=ngs_freq_range,
                                              dk=ngs_dk, nPixPsf=nPixPSFFocus,
                                              oversampling=focus_oversampling,
-                                             opdMap=self.opdMap)
+                                             opdMap=self.opdMap, **ngs_optics)
 
                 self.Focus_SR_field, self.Focus_FWHM_mas_field, self.Focus_EE_field = [], [], []
                 for idx, img in enumerate(psfLE_Focus):
                     s1 = cpuArray(psdFocus[idx]).sum()
-                    self.Focus_SR_field.append(np.exp(-s1 * (2*np.pi*1e-9/self.Focus_wvl)**2))
+                    self.Focus_SR_field.append(np.exp(-img.residual_phase_variance)
+                                               if self.tipTiltRemoval == 'pupil_fit'
+                                               else np.exp(-s1 * (2*np.pi*1e-9/self.Focus_wvl)**2))
 
                     fwhmX, fwhmY = getFWHM(arrayMastseltoP3(img.sampling), Focus_PSFsInMas, method='contour', nargout=2)
                     FWHM = np.sqrt(fwhmX * fwhmY)
