@@ -617,7 +617,7 @@ class baseSimulation(AbstractSimulation):
                 ee_ *= 1 / np.max(ee_)
                 ee_fn = interp1d(rr_, ee_, kind='cubic', bounds_error=False)
                 ps_mas_i = self.LO_psInMas[idx] if isinstance(self.LO_psInMas, list) else self.LO_psInMas
-                ee_NGS = ee_fn(max([FWHM, ps_mas_i]))
+                ee_NGS = ee_fn(min(rr_[-1], max(FWHM, ps_mas_i)))
                 ee_NGS = float(ee_NGS.item() if hasattr(ee_NGS, 'item') else ee_NGS)
             self.NGS_EE_field.append(ee_NGS)
 
