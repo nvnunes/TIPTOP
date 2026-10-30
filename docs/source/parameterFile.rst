@@ -391,20 +391,20 @@ can provide complementary measurements for correction beyond one grid's
 sampling band; the configured reconstruction and DM determine that correction.
 
 ``SuperResolution`` must remain ``False`` or be omitted. Reconstruction is
-frequency-local; use ``GridOffsets`` for shifted sampling.
+frequency-local: it does not jointly solve different output Fourier modes.
+``AliasAwareReconstruction`` determines the internal slope representation;
+there is no separate x/y configuration selection. A non-None
+``PhaseSamplesPerSubaperture`` and ``AliasOrder`` remain unsupported.
+Continuous square-cell gradients are retained.
 
 ``TomographicAliasing = True`` propagates aliased measurements through the
 actual tomographic reconstructor. It retains the ordinary alias frequency sum,
-spectrum and, with the default integrator, averaged temporal factor. It defaults to ``False`` and currently supports multiple
-equal-pitch Shack-Hartmann WFSs and one ground-conjugate DM. This option does not rebuild
+spectrum and, with the default integrator, averaged temporal factor. It uses
+the reconstructor's combined or separate-x/y measurement channels consistently.
+It defaults to ``False`` and currently supports multiple equal-pitch
+Shack-Hartmann WFSs and one ground-conjugate DM. This option does not rebuild
 the estimator by itself. With ``GridOffsets``, measurements receive the sampling
 phase at their physical alias frequency before propagation.
-
-``SymmetricAliasing = True`` includes both outer frequency replicas in the
-ordinary and tomographic alias sums. The sum then runs
-from ``-nTimes`` through ``+nTimes`` on both axes, excluding the target.
-The default ``False`` preserves the existing half-open truncation. Alias
-precomputations are invalidated when this choice changes.
 
 ``TomographicRegularizationFloor`` is a finite nonnegative fraction, default
 ``1e-12``, that sets the minimum diagonal regularization of P3's tomographic
@@ -425,6 +425,35 @@ retains the detector-clock/loop-rate duration. An explicit duration currently
 requires multiple guide stars. With ``[RTC] TemporalModel_HO = 'polc'``,
 exposure averaging is applied to each physical target and alias frequency
 before calculating independent layer powers.
+
+``AliasAwareReconstruction = True`` uses separate x/y slope measurements
+internally and includes their full correlated alias covariance in the native
+frequency-local MMSE solve. Channels are interleaved by guide star:
+``g0-x, g0-y, g1-x, g1-y, ...``. The target response, main residual, actual-
+reconstructor alias propagation and noise propagation use this same basis.
+Correlations among guide stars and axes are retained; correlations between
+different output Fourier modes are not introduced.
+
+``NoiseVariance`` remains one per-axis variance per guide star, in P3's
+existing units. Each x/y channel receives that WFS's variance; the independent
+measurement noise is diagonal, while the alias covariance is correlated.
+Automatically calculated noise follows the same mapping. The existing
+``TomographicRegularizationFloor`` policy and controller convention are retained.
+No separate slope selector or absolute-floor override is provided.
+
+The option defaults to ``False``: false or omitted preserves the existing
+combined-slope reconstruction and propagation. It remains independent of
+``TomographicAliasing``; with that option false, the stock alias-error
+prediction is retained. The same geometry restrictions apply. ``GridOffsets``
+enters the alias covariance and actual-reconstructor propagation at the
+physical alias frequencies.
+
+``SymmetricAliasing = True`` includes both outer frequency replicas in the
+ordinary and tomographic alias sums, including the reconstruction
+covariance when alias-aware reconstruction is selected. The sum then runs
+from ``-nTimes`` through ``+nTimes`` on both axes, excluding the target.
+The default ``False`` preserves the existing half-open truncation. Alias
+precomputations are invalidated when this choice changes.
 
 The High Order WaveFront Sensor can be a pyramid WFS or a Shack-Hartmann. Regardless of the WFS, the following parameters can de defined.
 
