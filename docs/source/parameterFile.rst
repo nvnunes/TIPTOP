@@ -382,6 +382,17 @@ That metadata is a pupil-weighted post-tilt phase variance; it is distinct
 from P3's piston-filtered component budget. Do not interpret an integral of
 the unfiltered optical power as a piston-removed wavefront variance.
 
+``GridOffsets`` supplies one physical ``[x, y]`` displacement per HO WFS
+in subaperture units. Omitted or all-zero offsets retain coincident grids
+exactly. Nonzero offsets enter the scalar tomographic sensing operator and
+require multiple Shack-Hartmann WFSs. The sign describes displacement of the
+sampling cells, rather than interpolation of a query location. Shifted grids
+can provide complementary measurements for correction beyond one grid's
+sampling band; the configured reconstruction and DM determine that correction.
+
+``SuperResolution`` must remain ``False`` or be omitted. Reconstruction is
+frequency-local; use ``GridOffsets`` for shifted sampling.
+
 The High Order WaveFront Sensor can be a pyramid WFS or a Shack-Hartmann. Regardless of the WFS, the following parameters can de defined.
 
 +-------------------------+---------+--------+--------------------------------------------------------------------------+
