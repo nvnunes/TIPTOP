@@ -44,3 +44,17 @@ def test_finite_aperture_rejects_non_boolean_values(tmp_path, value):
 def test_retired_false_switch_is_rejected_by_tiptop(tmp_path, key):
     with pytest.raises(ValueError, match='Remove them and set ReconstructionModel'):
         _simulation(tmp_path, False, config_updates={'sensor_HO': {key: 'False'}})
+
+
+@pytest.mark.parametrize('model', ['standard', 'alias_aware', 'finite_aperture'])
+@pytest.mark.parametrize('section,key,value', [
+    ('RTC','TemporalModel_HO', "'integrator'"),
+    ('RTC','TemporalModel_HO', "'polc'"),
+    ('sensor_HO','ExposureTime','None'),
+    ('sensor_HO','ExposureTime','0.0'),
+])
+def test_tiptop_rejects_retired_timing_before_native_execution(tmp_path, model, section, key, value):
+    config = {'sensor_HO': {'ReconstructionModel': repr(model), 'TipTiltRemoval': "'pupil_fit'"}}
+    config.setdefault(section, {})[key] = value
+    with pytest.raises(ValueError, match='Remove these keys. ReconstructionModel owns'):
+        _simulation(tmp_path, False, fullFluxNormalization=True, config_updates=config)

@@ -75,7 +75,8 @@ class baseSimulation(AbstractSimulation):
         if not isinstance(method, str) or method not in ('auto', 'none', 'spectral', 'pupil_fit'):
             raise ValueError("sensor_HO.TipTiltRemoval must be 'auto', 'none', 'spectral' or 'pupil_fit'")
         self.tipTiltRemoval = ('spectral' if self.LOisOn else 'none') if method == 'auto' else method
-        self.reconstructionModel = reconstruction_model(self.my_data_map['sensor_HO'])
+        self.reconstructionModel = reconstruction_model(
+            self.my_data_map['sensor_HO'], self.my_data_map.get('RTC', {}))
         self.finiteApertureReconstruction = self.reconstructionModel == 'finite_aperture'
         if self.finiteApertureReconstruction:
             if self.LOisOn or self.tipTiltRemoval != 'pupil_fit' or not self.fullFluxNormalization:

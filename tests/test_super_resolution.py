@@ -25,8 +25,7 @@ def test_xy_alias_aware_polc_uses_native_pupil_fit_optics(tmp_path, noise):
                 'TipTiltRemoval': "'pupil_fit'", 'NoiseVariance': repr(noise),
                 'GridOffsets': '[[-.23, -.23], [.23, -.23], [0., .23]]',
                 'ReconstructionModel': "'alias_aware'",
-                'TomographicRegularizationFloor': '1e-6', 'ExposureTime': '0.0'},
-            'RTC': {'TemporalModel_HO': "'polc'"}})
+                'TomographicRegularizationFloor': '1e-6'}})
     simulation.doOverallSimulation(skipMerit=True, skipPSF1D=True)
     model = simulation.fao
     assert model.aliasAwareReconstruction and model.symmetricAliasing

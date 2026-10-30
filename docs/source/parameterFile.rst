@@ -404,8 +404,8 @@ sampling band; the configured reconstruction and DM determine that correction.
   build or add the ``alias_aware`` estimator or atmospheric PSD.
 
 The selector never changes ``NumberLenslets``, ``GridOffsets``, pupil geometry,
-``TipTiltRemoval``, ``TomographicRegularizationFloor``, ``TemporalModel_HO``,
-``ExposureTime`` or controller parameters. ``alias_aware`` currently supports
+``TipTiltRemoval``, ``TomographicRegularizationFloor`` or physical controller
+parameters (loop gain, frame rate and delay). ``alias_aware`` currently supports
 multiple equal-pitch Shack-Hartmann WFSs and one ground-conjugate DM.
 The same geometry restriction applies to the finite model.
 
@@ -429,13 +429,18 @@ measurement noise. Zero disables the relative floor. Zero-covariance bins
 retain a positive numerical diagonal and zero reconstructed signal.
 The option is per model; setting it does not change other predictions.
 
-``ExposureTime`` optionally specifies the centered WFS measurement duration
-in seconds, independently of the command delay. Zero means instantaneous
-sampling; a positive value averages over that duration. Omitted or ``None``
-retains the detector-clock/loop-rate duration. An explicit duration currently
-requires multiple guide stars. With ``[RTC] TemporalModel_HO = 'polc'``,
-exposure averaging is applied to each physical target and alias frequency
-before calculating independent layer powers.
+The selected model owns its temporal response and measurement averaging:
+
+* ``standard``: existing integrator behaviour and the existing duration derived
+  from each detector's clock rate and the loop frame rate.
+* ``alias_aware`` and ``finite_aperture``: the accepted queued scalar POLC
+  response and instantaneous measurements (duration ``0.0``).
+
+``TemporalModel_HO`` and ``ExposureTime`` are retired keys. Supplying either
+raises a migration error, even if it matches the selected model. They are not
+read as overrides. Historical timing/exposure combinations require their
+frozen sources and configurations. Gain, frame rate and command delay remain
+explicit physical inputs under ``[RTC]``.
 
 With ``alias_aware``, channels are interleaved by guide star:
 ``g0-x, g0-y, g1-x, g1-y, ...``. ``NoiseVariance`` remains one per-axis
@@ -449,8 +454,8 @@ The initial supported contract is CPU, one science wavelength, HO-only,
 zero HO noise, multiple equal-pitch Shack-Hartmann WFSs, equal-height LGSs
 above every layer, one ideal ground mirror, all physical reconstruction
 layers,
-``TipTiltRemoval='pupil_fit'``, ``TemporalModel_HO='polc'``,
-``ExposureTime=0.0`` and NCPA off. TIPTOP also requires
+``TipTiltRemoval='pupil_fit'``, model-owned scalar POLC/instantaneous
+measurements and NCPA off. TIPTOP also requires
 ``fullFluxNormalization=True``. Unsupported combinations raise an error;
 MOAO, nonzero noise and other controllers have not been validated.
 
@@ -768,22 +773,21 @@ Can be set but not used
 [RTC]
 -----
 
-``TemporalModel_HO`` selects the high-order temporal treatment. Omitted or
-``'integrator'`` preserves the existing P3 calculations, including the omitted
-gain response in the main tomographic residual. ``'polc'`` selects a leaky
-pseudo-open-loop update followed by an integer-frame command queue, using
-``LoopGain_HO``, ``SensorFrameRate_HO`` and ``LoopDelaySteps_HO``. It requires
-gain in [0, 1], a positive rate and a nonnegative integer delay. Each atmospheric
-layer and alias uses its own frozen-flow temporal frequency before calculating
-power. Independent white measurement noise uses power gain ``g/(2-g)``.
-This assumes exact subtraction of the applied DM contribution in the POL
-measurement; additional finite WFS/DM feedback is not represented.
+The reconstruction model determines the high-order temporal response.
+``standard`` retains the existing integrator calculations, including the omitted
+gain response in the main tomographic residual. ``alias_aware`` and
+``finite_aperture`` apply a leaky pseudo-open-loop update followed by an
+integer-frame command queue and instantaneous WFS measurements. Both use the
+configured ``LoopGain_HO``, ``SensorFrameRate_HO`` and ``LoopDelaySteps_HO``;
+these physical parameters are never changed by model selection.
 
-POLC currently requires ``ReconstructionModel = 'alias_aware'`` or
-``'finite_aperture'`` and their supported geometry: multiple equal-pitch Shack-Hartmann WFSs and one
-ground-conjugate DM. Set ``[sensor_HO] ExposureTime = 0.0`` for instantaneous
-measurements; omitting it keeps the existing exposure duration. Reconstruction
-weights are unchanged by either temporal option.
+POLC requires gain in [0, 1], a positive rate and a nonnegative integer delay.
+Each atmospheric layer and alias uses its own frozen-flow temporal frequency
+before calculating power. Independent white measurement noise uses power gain
+``g/(2-g)``. This assumes exact subtraction of the applied DM contribution in
+the POL measurement; additional finite WFS/DM feedback is not represented.
+The current geometry restrictions of the selected model still apply.
+``TemporalModel_HO`` and ``ExposureTime`` cannot be configured independently.
 
 .. note::
 
