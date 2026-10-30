@@ -418,6 +418,14 @@ measurement noise. Zero disables the relative floor. Zero-covariance bins
 retain a positive numerical diagonal and zero reconstructed signal.
 The option is per model; setting it does not change other predictions.
 
+``ExposureTime`` optionally specifies the centered WFS measurement duration
+in seconds, independently of the command delay. Zero means instantaneous
+sampling; a positive value averages over that duration. Omitted or ``None``
+retains the detector-clock/loop-rate duration. An explicit duration currently
+requires multiple guide stars. With ``[RTC] TemporalModel_HO = 'polc'``,
+exposure averaging is applied to each physical target and alias frequency
+before calculating independent layer powers.
+
 The High Order WaveFront Sensor can be a pyramid WFS or a Shack-Hartmann. Regardless of the WFS, the following parameters can de defined.
 
 +-------------------------+---------+--------+--------------------------------------------------------------------------+
@@ -713,6 +721,23 @@ Can be set but not used
 
 [RTC]
 -----
+
+``TemporalModel_HO`` selects the high-order temporal treatment. Omitted or
+``'integrator'`` preserves the existing P3 calculations, including the omitted
+gain response in the main tomographic residual. ``'polc'`` selects a leaky
+pseudo-open-loop update followed by an integer-frame command queue, using
+``LoopGain_HO``, ``SensorFrameRate_HO`` and ``LoopDelaySteps_HO``. It requires
+gain in [0, 1], a positive rate and a nonnegative integer delay. Each atmospheric
+layer and alias uses its own frozen-flow temporal frequency before calculating
+power. Independent white measurement noise uses power gain ``g/(2-g)``.
+This assumes exact subtraction of the applied DM contribution in the POL
+measurement; additional finite WFS/DM feedback is not represented.
+
+The POLC option currently requires ``[sensor_HO] TomographicAliasing = True``
+and its supported geometry: multiple equal-pitch Shack-Hartmann WFSs and one
+ground-conjugate DM. Set ``[sensor_HO] ExposureTime = 0.0`` for instantaneous
+measurements; omitting it keeps the existing exposure duration. Reconstruction
+weights are unchanged by either temporal option.
 
 .. note::
 
