@@ -74,6 +74,14 @@ class baseSimulation(AbstractSimulation):
         if not isinstance(method, str) or method not in ('auto', 'none', 'spectral', 'pupil_fit'):
             raise ValueError("sensor_HO.TipTiltRemoval must be 'auto', 'none', 'spectral' or 'pupil_fit'")
         self.tipTiltRemoval = ('spectral' if self.LOisOn else 'none') if method == 'auto' else method
+        self.finiteApertureReconstruction = self.my_data_map['sensor_HO'].get('FiniteApertureReconstruction', False)
+        if not isinstance(self.finiteApertureReconstruction, bool):
+            raise ValueError('sensor_HO.FiniteApertureReconstruction must be boolean')
+        if self.finiteApertureReconstruction:
+            if self.LOisOn or self.tipTiltRemoval != 'pupil_fit' or not self.fullFluxNormalization:
+                raise ValueError("FiniteApertureReconstruction requires HO-only, pupil_fit and fullFluxNormalization=True")
+            if self.savePSDs:
+                raise ValueError('FiniteApertureReconstruction has no equivalent diagonal PSD export')
 
     # ----------------------------------------------------------------------------
     # --- IMPLEMENTATION OF ABSTRACT METHODS ---
@@ -164,7 +172,7 @@ class baseSimulation(AbstractSimulation):
                                 computeOpticalPSD=self.tipTiltRemoval == 'pupil_fit',
                                 getErrorBreakDown=self.getHoErrorBreakDown, doComputations=False,
                                 psdExpansion=True, psdPerWavelength=self.exactMultiWavelengthPSD,
-                                reduce_memory=True,
+                                reduce_memory=not self.finiteApertureReconstruction,
                                 path_root=_TIPTOP_ROOT,
                                 config_dict=self.my_data_map)
 
@@ -363,7 +371,10 @@ class baseSimulation(AbstractSimulation):
             if self.verbose:
                 print('******** HO PSF')
 
-            if self.multiGridPSD:
+            if self.finiteApertureReconstruction:
+                psfLongExpPointingsArr = self._finite_aperture_psfs()
+                PSD_HO = arrayP3toMastsel(self.PSD[0:self.nPointings])
+            elif self.multiGridPSD:
                 # One list of per-direction PSDs per science wavelength --
                 # see mastsel.mavisPsf.psdSetToPsfSet's per-wavelength
                 # calling convention.
@@ -413,7 +424,8 @@ class baseSimulation(AbstractSimulation):
                         fwhmList.append(fwhm)
                         if self.verbose:
                             s1 = cpuArray(psd_i[idx]).sum()
-                            sr = np.exp(-s1 * (2*np.pi*1e-9/wvl_c)**2)
+                            sr = (np.exp(-img.residual_phase_variance) if self.finiteApertureReconstruction
+                                  else np.exp(-s1 * (2*np.pi*1e-9/wvl_c)**2))
                             print(f'SR(@{int(wvl_c*1e9)}nm)        : {sr:.5f}')
                             print(f'FWHM(@{int(wvl_c*1e9)}nm) [mas]: {fwhm:.3f}')
 
@@ -448,6 +460,27 @@ class baseSimulation(AbstractSimulation):
             self.cubeResultsArray = np.array(cubeResultsArray)
         else:
             self.cubeResultsArray = np.array(cubeResultsArray[0])
+
+    def _finite_aperture_psfs(self):
+        """Compose P3 finite covariance with TIPTOP's nonstationary optics."""
+        from .finite_pupil import FinitePupilSampling
+        import time
+        if self.nWvl != 1:
+            raise ValueError('FiniteApertureReconstruction currently requires one wavelength')
+        period = 1/float(self.fao.freq.kxAO_[1, 0]-self.fao.freq.kxAO_[0, 0])
+        sampling = FinitePupilSampling(cpuArray(self.fao.ao.tel.pupil), self.N, self.sx, period)
+        self.finiteApertureTimings = []
+        results = []
+        for field in range(self.nPointings):
+            started = time.perf_counter()
+            covariance, profile = self.fao.finite_aperture_covariance(sampling, field)
+            image, checks = sampling.psf(covariance, self.fao.finiteApertureBackend.stationary_high_lags)
+            result = Field(self.wvlRef, self.N, self.grid_diameter)
+            result.sampling = image
+            result.residual_phase_variance = checks['residual_phase_variance']
+            results.append(result)
+            self.finiteApertureTimings.append(dict(seconds=time.perf_counter()-started, **profile, **checks))
+        return results
 
     def _finalize_full_field_results(self, astIndex):
         """

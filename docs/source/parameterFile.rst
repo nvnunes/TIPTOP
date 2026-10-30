@@ -390,6 +390,10 @@ sampling cells, rather than interpolation of a query location. Shifted grids
 can provide complementary measurements for correction beyond one grid's
 sampling band; the configured reconstruction and DM determine that correction.
 
+The descriptions below refer to the default frequency-local path. The
+candidate ``FiniteApertureReconstruction`` bundle described below replaces
+that reconstruction and atmospheric optical propagation together.
+
 ``SuperResolution`` must remain ``False`` or be omitted. Reconstruction is
 frequency-local: it does not jointly solve different output Fourier modes.
 ``AliasAwareReconstruction`` determines the internal slope representation;
@@ -454,6 +458,39 @@ covariance when alias-aware reconstruction is selected. The sum then runs
 from ``-nTimes`` through ``+nTimes`` on both axes, excluding the target.
 The default ``False`` preserves the existing half-open truncation. Alias
 precomputations are invalidated when this choice changes.
+
+``FiniteApertureReconstruction`` is an experimental boolean, default ``False``.
+True jointly selects finite valid-lenslet sensing, physical layer-dependent
+LGS footprints, global correlated x/y/alias reconstruction and nonstationary
+Gaussian covariance optics. It inherits the configured shifts, atmospheric
+prior, relative numerical floor and scalar POLC response. No individual
+ingredient switches are provided. False or omitted preserves existing results.
+
+The initial supported contract is CPU, one science wavelength, HO-only,
+zero HO noise, multiple equal-pitch Shack-Hartmann WFSs, equal-height LGSs
+above every layer, one ideal ground mirror, all physical reconstruction
+layers, ``SuperResolution=False``, ``AliasAwareReconstruction=True``,
+``SymmetricAliasing=True``, ``TomographicAliasing=True``,
+``TipTiltRemoval='pupil_fit'``, ``TemporalModel_HO='polc'``,
+``ExposureTime=0.0`` and NCPA off. TIPTOP also requires
+``fullFluxNormalization=True``. Unsupported combinations raise an error;
+MOAO, nonzero noise and other controllers have not been validated.
+
+P3's instance-owned reconstruction and optical caches are keyed by physical
+configuration, realized atmospheric/guide inputs, numerical policy and the
+original pupil fit. TIPTOP retains the native pupil diffraction and known
+high-frequency incoming covariance while using a reduced pupil-pair
+quadrature, sharing MASTSEL's public pupil-tilt fit coefficients with the
+existing optics. Accuracy and cost must be validated for a new configuration.
+
+The finite residual has no equivalent diagonal PSD. P3's ordinary PSD and
+error decomposition remain predecessor diagnostics and do not enter its
+atmospheric optics. The finite path includes incoming turbulence and applied
+correction once; independent chromatic/refraction terms are added once.
+TIPTOP reports finite pupil-removed residual variance and full-flux PSFs;
+PSD export is rejected for this option. Direct P3 callers use
+``calcPSF=False``, ``reduce_memory=False`` and
+``finite_aperture_covariance`` with an optics sampling contract.
 
 The High Order WaveFront Sensor can be a pyramid WFS or a Shack-Hartmann. Regardless of the WFS, the following parameters can de defined.
 
