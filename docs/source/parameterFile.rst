@@ -406,6 +406,18 @@ from ``-nTimes`` through ``+nTimes`` on both axes, excluding the target.
 The default ``False`` preserves the existing half-open truncation. Alias
 precomputations are invalidated when this choice changes.
 
+``TomographicRegularizationFloor`` is a finite nonnegative fraction, default
+``1e-12``, that sets the minimum diagonal regularization of P3's tomographic
+measurement covariance at each spatial frequency. P3 multiplies it by that
+frequency's largest covariance diagonal and uses the larger of this floor
+and each measurement channel's noise variance. The largest diagonal is
+evaluated in the active measurement basis; this is not a fixed absolute
+regularization. It changes reconstruction
+weights and can materially affect propagated alias power; it does not inject
+measurement noise. Zero disables the relative floor. Zero-covariance bins
+retain a positive numerical diagonal and zero reconstructed signal.
+The option is per model; setting it does not change other predictions.
+
 The High Order WaveFront Sensor can be a pyramid WFS or a Shack-Hartmann. Regardless of the WFS, the following parameters can de defined.
 
 +-------------------------+---------+--------+--------------------------------------------------------------------------+
