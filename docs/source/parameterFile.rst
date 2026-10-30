@@ -393,6 +393,19 @@ sampling band; the configured reconstruction and DM determine that correction.
 ``SuperResolution`` must remain ``False`` or be omitted. Reconstruction is
 frequency-local; use ``GridOffsets`` for shifted sampling.
 
+``TomographicAliasing = True`` propagates aliased measurements through the
+actual tomographic reconstructor. It retains the ordinary alias frequency sum,
+spectrum and, with the default integrator, averaged temporal factor. It defaults to ``False`` and currently supports multiple
+equal-pitch Shack-Hartmann WFSs and one ground-conjugate DM. This option does not rebuild
+the estimator by itself. With ``GridOffsets``, measurements receive the sampling
+phase at their physical alias frequency before propagation.
+
+``SymmetricAliasing = True`` includes both outer frequency replicas in the
+ordinary and tomographic alias sums. The sum then runs
+from ``-nTimes`` through ``+nTimes`` on both axes, excluding the target.
+The default ``False`` preserves the existing half-open truncation. Alias
+precomputations are invalidated when this choice changes.
+
 The High Order WaveFront Sensor can be a pyramid WFS or a Shack-Hartmann. Regardless of the WFS, the following parameters can de defined.
 
 +-------------------------+---------+--------+--------------------------------------------------------------------------+
