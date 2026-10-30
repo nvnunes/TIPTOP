@@ -24,14 +24,13 @@ def test_xy_alias_aware_polc_uses_native_pupil_fit_optics(tmp_path, noise):
             'sensor_HO': {
                 'TipTiltRemoval': "'pupil_fit'", 'NoiseVariance': repr(noise),
                 'GridOffsets': '[[-.23, -.23], [.23, -.23], [0., .23]]',
-                'SuperResolution': 'False', 'TomographicAliasing': 'True',
-                'AliasAwareReconstruction': 'True', 'SymmetricAliasing': 'True',
+                'ReconstructionModel': "'alias_aware'",
                 'TomographicRegularizationFloor': '1e-6', 'ExposureTime': '0.0'},
             'RTC': {'TemporalModel_HO': "'polc'"}})
     simulation.doOverallSimulation(skipMerit=True, skipPSF1D=True)
     model = simulation.fao
     assert model.aliasAwareReconstruction and model.symmetricAliasing
-    assert model.tomographicAliasing and not model.superResolution
+    assert model.tomographicAliasing and model.reconstructionModel == 'alias_aware'
     assert model.W.shape[-1] == 2*model.nGs and model.tomoRelRegFloor == 1e-6
     assert model.temporalModel == 'polc' and model.exposureTime == 0
     assert model.computeOpticalPSD and simulation.tipTiltRemoval == 'pupil_fit'

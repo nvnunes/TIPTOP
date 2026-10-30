@@ -390,21 +390,32 @@ sampling cells, rather than interpolation of a query location. Shifted grids
 can provide complementary measurements for correction beyond one grid's
 sampling band; the configured reconstruction and DM determine that correction.
 
-``SuperResolution`` must remain ``False`` or be omitted. Reconstruction is
-frequency-local: it does not jointly solve different output Fourier modes.
-``AliasAwareReconstruction`` determines the internal slope representation;
-there is no separate x/y configuration selection. A non-None
-``PhaseSamplesPerSubaperture`` and ``AliasOrder`` remain unsupported.
-Continuous square-cell gradients are retained.
+``ReconstructionModel`` selects the complete sensing/reconstruction model:
 
-``TomographicAliasing = True`` propagates aliased measurements through the
-actual tomographic reconstructor. It retains the ordinary alias frequency sum,
-spectrum and, with the default integrator, averaged temporal factor. It uses
-the reconstructor's combined or separate-x/y measurement channels consistently.
-It defaults to ``False`` and currently supports multiple equal-pitch
-Shack-Hartmann WFSs and one ground-conjugate DM. This option does not rebuild
-the estimator by itself. With ``GridOffsets``, measurements receive the sampling
-phase at their physical alias frequency before propagation.
+* ``'standard'`` (default when omitted): existing ordinary P3 reconstruction,
+  combined slopes and its existing alias propagation/truncation.
+* ``'alias_aware'``: frequency-local reconstruction with separate x/y slopes,
+  full correlated alias covariance, symmetric alias cutoff and propagation
+  through the actual reconstructor. Continuous square-cell sensing, configured
+  shifts, main residual, alias and noise all use the same measurement basis.
+* ``'finite_aperture'``: finite valid-lenslet sensing, physical layer-dependent
+  LGS footprints, its own global reconstruction and residual covariance, and
+  the corresponding covariance-based PSF calculation in TIPTOP. It does not
+  build or add the ``alias_aware`` estimator or atmospheric PSD.
+
+The selector never changes ``NumberLenslets``, ``GridOffsets``, pupil geometry,
+``TipTiltRemoval``, ``TomographicRegularizationFloor``, ``TemporalModel_HO``,
+``ExposureTime`` or controller parameters. ``alias_aware`` currently supports
+multiple equal-pitch Shack-Hartmann WFSs and one ground-conjugate DM.
+The same geometry restriction applies to the finite model.
+
+The retired keys ``AliasAwareReconstruction``, ``FiniteApertureReconstruction``,
+``TomographicAliasing``, ``SymmetricAliasing`` and ``SuperResolution`` are
+rejected, even if false. Remove them and choose a model explicitly. Earlier
+experimental combinations are not automatically reinterpreted; reproduce them
+with their recorded frozen sources and configurations. No separate slope-mode
+selector is provided. Non-None ``PhaseSamplesPerSubaperture`` and ``AliasOrder``
+remain unsupported.
 
 ``TomographicRegularizationFloor`` is a finite nonnegative fraction, default
 ``1e-12``, that sets the minimum diagonal regularization of P3's tomographic
@@ -426,34 +437,40 @@ requires multiple guide stars. With ``[RTC] TemporalModel_HO = 'polc'``,
 exposure averaging is applied to each physical target and alias frequency
 before calculating independent layer powers.
 
-``AliasAwareReconstruction = True`` uses separate x/y slope measurements
-internally and includes their full correlated alias covariance in the native
-frequency-local MMSE solve. Channels are interleaved by guide star:
-``g0-x, g0-y, g1-x, g1-y, ...``. The target response, main residual, actual-
-reconstructor alias propagation and noise propagation use this same basis.
-Correlations among guide stars and axes are retained; correlations between
-different output Fourier modes are not introduced.
+With ``alias_aware``, channels are interleaved by guide star:
+``g0-x, g0-y, g1-x, g1-y, ...``. ``NoiseVariance`` remains one per-axis
+variance per guide star in existing P3 units; both axes receive that guide's
+variance. Independent measurement noise is diagonal, while alias covariance
+is correlated. Automatic noise follows the same mapping. Symmetric alias sums
+include ``-nTimes`` through ``+nTimes`` on both axes, excluding the target.
+This model does not couple different output Fourier frequencies.
 
-``NoiseVariance`` remains one per-axis variance per guide star, in P3's
-existing units. Each x/y channel receives that WFS's variance; the independent
-measurement noise is diagonal, while the alias covariance is correlated.
-Automatically calculated noise follows the same mapping. The existing
-``TomographicRegularizationFloor`` policy and controller convention are retained.
-No separate slope selector or absolute-floor override is provided.
+The initial supported contract is CPU, one science wavelength, HO-only,
+zero HO noise, multiple equal-pitch Shack-Hartmann WFSs, equal-height LGSs
+above every layer, one ideal ground mirror, all physical reconstruction
+layers,
+``TipTiltRemoval='pupil_fit'``, ``TemporalModel_HO='polc'``,
+``ExposureTime=0.0`` and NCPA off. TIPTOP also requires
+``fullFluxNormalization=True``. Unsupported combinations raise an error;
+MOAO, nonzero noise and other controllers have not been validated.
 
-The option defaults to ``False``: false or omitted preserves the existing
-combined-slope reconstruction and propagation. It remains independent of
-``TomographicAliasing``; with that option false, the stock alias-error
-prediction is retained. The same geometry restrictions apply. ``GridOffsets``
-enters the alias covariance and actual-reconstructor propagation at the
-physical alias frequencies.
+P3's instance-owned reconstruction and optical caches are keyed by physical
+configuration, realized atmospheric/guide inputs, numerical policy and the
+original pupil fit. TIPTOP retains the native pupil diffraction and known
+high-frequency incoming covariance while using a reduced pupil-pair
+quadrature, sharing MASTSEL's public pupil-tilt fit coefficients with the
+existing optics. Accuracy and cost must be validated for a new configuration.
 
-``SymmetricAliasing = True`` includes both outer frequency replicas in the
-ordinary and tomographic alias sums, including the reconstruction
-covariance when alias-aware reconstruction is selected. The sum then runs
-from ``-nTimes`` through ``+nTimes`` on both axes, excluding the target.
-The default ``False`` preserves the existing half-open truncation. Alias
-precomputations are invalidated when this choice changes.
+The finite residual has no equivalent diagonal PSD: ``PSD`` and ``opticalPSD``
+are ``None`` in P3/TIPTOP for this model. Ordinary reconstruction, controller
+power propagation and error decomposition are skipped. The shared native
+frequency grid, atmospheric setup and optimal-projector normalization are
+retained, together with independent chromatic/refraction contributions. The finite path includes incoming turbulence and applied
+correction once; independent chromatic/refraction terms are added once.
+TIPTOP reports finite pupil-removed residual variance and full-flux PSFs;
+PSD export is rejected for this option. Direct P3 callers use
+``calcPSF=False``, ``reduce_memory=False`` and
+``finite_aperture_covariance`` with an optics sampling contract.
 
 The High Order WaveFront Sensor can be a pyramid WFS or a Shack-Hartmann. Regardless of the WFS, the following parameters can de defined.
 
@@ -762,8 +779,8 @@ power. Independent white measurement noise uses power gain ``g/(2-g)``.
 This assumes exact subtraction of the applied DM contribution in the POL
 measurement; additional finite WFS/DM feedback is not represented.
 
-The POLC option currently requires ``[sensor_HO] TomographicAliasing = True``
-and its supported geometry: multiple equal-pitch Shack-Hartmann WFSs and one
+POLC currently requires ``ReconstructionModel = 'alias_aware'`` or
+``'finite_aperture'`` and their supported geometry: multiple equal-pitch Shack-Hartmann WFSs and one
 ground-conjugate DM. Set ``[sensor_HO] ExposureTime = 0.0`` for instantaneous
 measurements; omitting it keeps the existing exposure duration. Reconstruction
 weights are unchanged by either temporal option.

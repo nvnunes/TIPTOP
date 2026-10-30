@@ -5,6 +5,7 @@ from scipy.interpolate import interp1d
 
 # P3 Imports
 from p3.aoSystem.fourierModel import fourierModel
+from p3.aoSystem.reconstruction import reconstruction_model
 from p3.aoSystem.FourierUtils import getStrehl, getFWHM, getEncircledEnergy, getEnsquaredEnergy, pistonFilter
 
 # Mastsel Imports
@@ -74,6 +75,13 @@ class baseSimulation(AbstractSimulation):
         if not isinstance(method, str) or method not in ('auto', 'none', 'spectral', 'pupil_fit'):
             raise ValueError("sensor_HO.TipTiltRemoval must be 'auto', 'none', 'spectral' or 'pupil_fit'")
         self.tipTiltRemoval = ('spectral' if self.LOisOn else 'none') if method == 'auto' else method
+        self.reconstructionModel = reconstruction_model(self.my_data_map['sensor_HO'])
+        self.finiteApertureReconstruction = self.reconstructionModel == 'finite_aperture'
+        if self.finiteApertureReconstruction:
+            if self.LOisOn or self.tipTiltRemoval != 'pupil_fit' or not self.fullFluxNormalization:
+                raise ValueError("ReconstructionModel=finite_aperture requires HO-only, pupil_fit and fullFluxNormalization=True")
+            if self.savePSDs:
+                raise ValueError('ReconstructionModel=finite_aperture has no equivalent diagonal PSD export')
 
     # ----------------------------------------------------------------------------
     # --- IMPLEMENTATION OF ABSTRACT METHODS ---
@@ -164,7 +172,7 @@ class baseSimulation(AbstractSimulation):
                                 computeOpticalPSD=self.tipTiltRemoval == 'pupil_fit',
                                 getErrorBreakDown=self.getHoErrorBreakDown, doComputations=False,
                                 psdExpansion=True, psdPerWavelength=self.exactMultiWavelengthPSD,
-                                reduce_memory=True,
+                                reduce_memory=not self.finiteApertureReconstruction,
                                 path_root=_TIPTOP_ROOT,
                                 config_dict=self.my_data_map)
 
@@ -175,28 +183,34 @@ class baseSimulation(AbstractSimulation):
 
         self.fao.initComputations()
 
-        # Fail here with a clear message: a non-finite HO PSD otherwise surfaces
-        # much later as an obscure error inside the LO (MASTSEL) computations.
-        for psd_i in (self.fao.PSD if isinstance(self.fao.PSD, list) else [self.fao.PSD]):
-            if not bool(np.isfinite(psd_i).all()):
-                raise ValueError(
-                    "The HO PSD computed by P3 contains non-finite values (NaN/Inf): "
-                    "check the [atmosphere], [sources_HO] and [sensor_HO] parameters."
-                )
-
-        # self.fao.PSD is a list (one exact-grid array per science wavelength)
-        # only when exactMultiWavelengthPSD=True *and* more than one wavelength
-        # was requested -- see frequencyDomain.wvl_grids in P3. Otherwise (the
-        # default, and the only case before this feature existed) it stays a
-        # single (nOtf,nOtf,nSrc) array, exactly as today.
-        self.multiGridPSD = isinstance(self.fao.PSD, list)
-        # Component variance reporting retains P3's convention. Finite-pupil
-        # optics consume stationary main/alias power before variance filtering.
-        optical_psd = self.fao.opticalPSD if self.tipTiltRemoval == 'pupil_fit' else self.fao.PSD
-        if self.multiGridPSD:
-            self.PSD = [p.transpose() for p in optical_psd]
+        if self.finiteApertureReconstruction:
+            # The finite residual is a covariance, not an alternative diagonal
+            # atmospheric PSD. Its optics are selected by the model itself.
+            self.multiGridPSD = False
+            self.PSD = None
         else:
-            self.PSD = optical_psd.transpose()
+            # Fail here with a clear message: a non-finite HO PSD otherwise surfaces
+            # much later as an obscure error inside the LO (MASTSEL) computations.
+            for psd_i in (self.fao.PSD if isinstance(self.fao.PSD, list) else [self.fao.PSD]):
+                if not bool(np.isfinite(psd_i).all()):
+                    raise ValueError(
+                        "The HO PSD computed by P3 contains non-finite values (NaN/Inf): "
+                        "check the [atmosphere], [sources_HO] and [sensor_HO] parameters."
+                    )
+
+            # self.fao.PSD is a list (one exact-grid array per science wavelength)
+            # only when exactMultiWavelengthPSD=True *and* more than one wavelength
+            # was requested -- see frequencyDomain.wvl_grids in P3. Otherwise (the
+            # default, and the only case before this feature existed) it stays a
+            # single (nOtf,nOtf,nSrc) array, exactly as today.
+            self.multiGridPSD = isinstance(self.fao.PSD, list)
+            # Component variance reporting retains P3's convention. Finite-pupil
+            # optics consume stationary main/alias power before variance filtering.
+            optical_psd = self.fao.opticalPSD if self.tipTiltRemoval == 'pupil_fit' else self.fao.PSD
+            if self.multiGridPSD:
+                self.PSD = [p.transpose() for p in optical_psd]
+            else:
+                self.PSD = optical_psd.transpose()
 
         # N/PSDstep/freq_range/grid_diameter/dk/mask always describe P3's
         # *shared* grid (self.fao.freq, unaffected by wvl_grids -- see
@@ -363,7 +377,10 @@ class baseSimulation(AbstractSimulation):
             if self.verbose:
                 print('******** HO PSF')
 
-            if self.multiGridPSD:
+            if self.finiteApertureReconstruction:
+                psfLongExpPointingsArr = self._finite_aperture_psfs()
+                PSD_HO = None
+            elif self.multiGridPSD:
                 # One list of per-direction PSDs per science wavelength --
                 # see mastsel.mavisPsf.psdSetToPsfSet's per-wavelength
                 # calling convention.
@@ -412,8 +429,9 @@ class baseSimulation(AbstractSimulation):
                         fwhm = np.sqrt(fwhmX * fwhmY)
                         fwhmList.append(fwhm)
                         if self.verbose:
-                            s1 = cpuArray(psd_i[idx]).sum()
-                            sr = np.exp(-s1 * (2*np.pi*1e-9/wvl_c)**2)
+                            s1 = 0. if self.finiteApertureReconstruction else cpuArray(psd_i[idx]).sum()
+                            sr = (np.exp(-img.residual_phase_variance) if self.finiteApertureReconstruction
+                                  else np.exp(-s1 * (2*np.pi*1e-9/wvl_c)**2))
                             print(f'SR(@{int(wvl_c*1e9)}nm)        : {sr:.5f}')
                             print(f'FWHM(@{int(wvl_c*1e9)}nm) [mas]: {fwhm:.3f}')
 
@@ -448,6 +466,27 @@ class baseSimulation(AbstractSimulation):
             self.cubeResultsArray = np.array(cubeResultsArray)
         else:
             self.cubeResultsArray = np.array(cubeResultsArray[0])
+
+    def _finite_aperture_psfs(self):
+        """Compose P3 finite covariance with TIPTOP's nonstationary optics."""
+        from .finite_pupil import FinitePupilSampling
+        import time
+        if self.nWvl != 1:
+            raise ValueError('ReconstructionModel=finite_aperture currently requires one wavelength')
+        period = 1/float(self.fao.freq.kxAO_[1, 0]-self.fao.freq.kxAO_[0, 0])
+        sampling = FinitePupilSampling(cpuArray(self.fao.ao.tel.pupil), self.N, self.sx, period)
+        self.finiteApertureTimings = []
+        results = []
+        for field in range(self.nPointings):
+            started = time.perf_counter()
+            covariance, profile = self.fao.finite_aperture_covariance(sampling, field)
+            image, checks = sampling.psf(covariance, self.fao.finiteApertureBackend.stationary_high_lags)
+            result = Field(self.wvlRef, self.N, self.grid_diameter)
+            result.sampling = image
+            result.residual_phase_variance = checks['residual_phase_variance']
+            results.append(result)
+            self.finiteApertureTimings.append(dict(seconds=time.perf_counter()-started, **profile, **checks))
+        return results
 
     def _finalize_full_field_results(self, astIndex):
         """
