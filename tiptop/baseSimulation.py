@@ -390,6 +390,10 @@ class baseSimulation(AbstractSimulation):
             if self.finiteApertureReconstruction:
                 psfLongExpPointingsArr = self._finite_aperture_psfs()
                 PSD_HO = None
+            elif (self.reconstructionModel == 'alias_aware' and self.opdMap is not None
+                    and bool(np.any(cpuArray(self.opdMap)))):
+                psfLongExpPointingsArr = self._original_map_alias_psfs()
+                PSD_HO = arrayP3toMastsel(self.PSD[0:self.nPointings])
             elif self.multiGridPSD:
                 # One list of per-direction PSDs per science wavelength --
                 # see mastsel.mavisPsf.psdSetToPsfSet's per-wavelength
@@ -516,6 +520,26 @@ class baseSimulation(AbstractSimulation):
             raise ValueError('Static-map optics have been validated only for HO-only predictions without jitter')
         if self.nPixPSF != self.N or not np.isclose(self.overSamp,1.):
             raise ValueError('Static-map optics currently require the native detector size and pixel sampling')
+
+    def _original_map_alias_psfs(self):
+        """Preserve phase-spectrum physics and replace resampled static optics."""
+        self._validate_static_map_optics()
+        from .static_map import AliasStaticOptics
+        import time
+        phase=cpuArray(self.opdMap)*(2*np.pi*1e-9/self.wvlRef)
+        period=1/float(self.fao.freq.kxAO_[1,0]-self.fao.freq.kxAO_[0,0])
+        optics=AliasStaticOptics(cpuArray(self.fao.ao.tel.pupil),phase,
+            float(self.fao.ao.tel.D),period,self.N,self.sx,float(self.fao.freq.kcMax_))
+        self.staticMapTimings=[];results=[]
+        for psd in self.PSD:
+            started=time.perf_counter()
+            spectrum=np.fft.ifftshift(cpuArray(psd)/self.dk**2)*(np.pi/self.wvlRef*self.freq_range)**2
+            image,checks=optics.psf(spectrum)
+            result=Field(self.wvlRef,self.N,self.wvlRef*self.freq_range,'rad')
+            result.sampling=image;result.residual_phase_variance=checks['residual_phase_variance']
+            results.append(result);self.staticMapTimings.append(dict(seconds=time.perf_counter()-started,**checks))
+        self.staticMapHighCacheBuilds=optics.high_cache_builds
+        return results
 
     def _finalize_full_field_results(self, astIndex):
         """

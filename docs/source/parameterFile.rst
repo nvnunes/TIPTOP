@@ -459,7 +459,20 @@ wavelength grid. The map supplied by the caller stays unchanged.
 only to the common map supplied by ``PathStaticOn`` in standard pupil-fit
 optics. Finite-aperture optics always uses RMS-preserving resampling, regardless
 of this option. It does not compensate field-dependent
-``PathStaticOff`` maps.
+``PathStaticOff`` maps. Alias-aware original-static-OTF optics does not resample
+that phase map and is unaffected by this option.
+
+For ``alias_aware``, TIPTOP's own spectral moments and bounded pupil-pair
+calculation supply the dynamic covariance/coherence. Only MASTSEL's existing
+public pupil-fit coefficients are reused; its LO model and optics API are
+unchanged. A nonzero ``PathStaticOn`` retains the original
+static OTF and estimates its dynamic pupil-fit transfer using complex-cell
+averages. It requires one wavelength, pupil-fit removal, full-flux output,
+HO-only operation without jitter and native detector sampling. Its accuracy
+has been checked for the retained broad atmospheric spectra. The OTF ratio is
+an approximation and need not preserve positive definiteness for arbitrary
+narrow spectra; nonpositive optical results raise an error rather than being
+clipped. Zero/omitted maps retain ordinary native pupil-fit optics.
 
 With ``alias_aware``, channels are interleaved by guide star:
 ``g0-x, g0-y, g1-x, g1-y, ...``. ``NoiseVariance`` remains one per-axis
