@@ -75,6 +75,11 @@ class baseSimulation(AbstractSimulation):
         if not isinstance(method, str) or method not in ('auto', 'none', 'spectral', 'pupil_fit'):
             raise ValueError("sensor_HO.TipTiltRemoval must be 'auto', 'none', 'spectral' or 'pupil_fit'")
         self.tipTiltRemoval = ('spectral' if self.LOisOn else 'none') if method == 'auto' else method
+        self.staticOnRmsCompensation = self.my_data_map['telescope'].get('StaticOnRmsCompensation', False)
+        if not isinstance(self.staticOnRmsCompensation, bool):
+            raise ValueError('telescope.StaticOnRmsCompensation must be a boolean')
+        if self.staticOnRmsCompensation and self.tipTiltRemoval != 'pupil_fit':
+            raise ValueError("StaticOnRmsCompensation=True currently requires TipTiltRemoval='pupil_fit'")
         self.reconstructionModel = reconstruction_model(
             self.my_data_map['sensor_HO'], self.my_data_map.get('RTC', {}))
         self.finiteApertureReconstruction = self.reconstructionModel == 'finite_aperture'
@@ -369,9 +374,13 @@ class baseSimulation(AbstractSimulation):
         """
         Convolves PSDs and standardizes the output in self.cubeResultsArray.
         """
+        psf_builder = psdSetToPsfSet
         psf_options = {'full_flux': True} if self.fullFluxNormalization else {}
         if self.tipTiltRemoval == 'pupil_fit':
             psf_options['tip_tilt_removal'] = 'pupil_fit'
+            if self.staticOnRmsCompensation:
+                from .static_phase import rms_compensated_psfs
+                psf_builder = rms_compensated_psfs
         if astIndex is None or self.firstSimCall:
             mask = arrayP3toMastsel(self.fao.ao.tel.pupil)
 
@@ -387,7 +396,7 @@ class baseSimulation(AbstractSimulation):
                 # calling convention.
                 PSD_HO = [arrayP3toMastsel(self.PSD[i][0:self.nPointings])
                           for i in range(self.nWvl)]
-                psfLongExpPointingsArr = psdSetToPsfSet(
+                psfLongExpPointingsArr = psf_builder(
                     PSD_HO, mask, self.wvl, nPixPup=self.sx_per_wvl,
                     freq_range=self.freq_range_per_wvl, dk=self.dk_per_wvl,
                     nPixPsf=self.nPixPSF, opdMap=self.opdMap, **psf_options,
@@ -401,7 +410,7 @@ class baseSimulation(AbstractSimulation):
                     self.PSD[self.wvlRef_grid_idx][0:self.nPointings], axis=(1, 2)))
             else:
                 PSD_HO = arrayP3toMastsel(self.PSD[0:self.nPointings])
-                psfLongExpPointingsArr = psdSetToPsfSet(PSD_HO, mask, self.wvl,
+                psfLongExpPointingsArr = psf_builder(PSD_HO, mask, self.wvl,
                                                         nPixPup=self.sx, freq_range=self.freq_range,
                                                         dk=self.dk, nPixPsf=self.nPixPSF,
                                                         oversampling=self.overSamp,
