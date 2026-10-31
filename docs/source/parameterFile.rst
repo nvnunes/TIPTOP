@@ -84,6 +84,9 @@ We now go more in detail for each section:
 |                          |          |       |static aberrations. Example: the static aberration of the `ELT M1`_.      |
 |                          |          |       |If absent or '', not used.                                                |
 +--------------------------+----------+-------+--------------------------------------------------------------------------+
+|StaticOnRmsCompensation   |No        |bool   |Default False. Opt in to measured RMS compensation for PathStaticOn.      |
+|                          |          |       |Requires pupil_fit; restores amplitude lost during map resampling.        |
++--------------------------+----------+-------+--------------------------------------------------------------------------+
 |zCoefStaticOn             |No        |list of|*default: None*, Combination of zernike modes that models an on-axis      |
 |                          |          |float  |static aberration. Coefficients are in [nm RMS].                          |
 |                          |          |       |Examples: Focus ``[0,0,100]``; Astigmatism ``[0,0,0,100]``;               |
@@ -355,6 +358,19 @@ We now go more in detail for each section:
 
 [sensor_HO]
 -----------
+
+With ``TipTiltRemoval='pupil_fit'``, optional
+``[telescope] StaticOnRmsCompensation=True`` compensates static-map resampling
+using the original/resampled intensity-weighted, piston-removed RMS ratio.
+It defaults to False and must be a boolean. Enabling it requires pupil-fit
+removal. The factor is recomputed on each wavelength's actual pupil grid and
+applies to both the static phase and its original-pupil tilt fit. The input
+OPD map, reconstruction and atmospheric spectrum are unchanged.
+
+This restores amplitude, not lost spatial structure. It covers the common map
+supplied by ``PathStaticOn``, not field-dependent ``PathStaticOff`` maps. Zero
+and omitted maps retain existing results. TIPTOP supplies the compensated map
+to MASTSEL's unchanged public optics API.
 
 ``TipTiltRemoval`` selects the P3 backend's tilt treatment:
 
