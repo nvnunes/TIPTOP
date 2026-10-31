@@ -480,23 +480,42 @@ class baseSimulation(AbstractSimulation):
     def _finite_aperture_psfs(self):
         """Compose P3 finite covariance with TIPTOP's nonstationary optics."""
         from .finite_pupil import FinitePupilSampling
+        from .static_phase import static_phase_rms_scale
         import time
         if self.nWvl != 1:
             raise ValueError('ReconstructionModel=finite_aperture currently requires one wavelength')
         period = 1/float(self.fao.freq.kxAO_[1, 0]-self.fao.freq.kxAO_[0, 0])
-        sampling = FinitePupilSampling(cpuArray(self.fao.ao.tel.pupil), self.N, self.sx, period)
+        phase = None if self.opdMap is None else cpuArray(self.opdMap)*(2*np.pi*1e-9/self.wvlRef)
+        if phase is not None and np.any(phase):
+            self._validate_static_map_optics()
+        self.finiteApertureStaticRmsScale = 1.
+        if phase is not None:
+            self.finiteApertureStaticRmsScale = static_phase_rms_scale(
+                cpuArray(self.fao.ao.tel.pupil),phase,self.sx)
+        if phase is not None:
+            phase = phase*self.finiteApertureStaticRmsScale
+        sampling = FinitePupilSampling(cpuArray(self.fao.ao.tel.pupil), self.N, self.sx, period,
+            static_phase=phase)
         self.finiteApertureTimings = []
         results = []
         for field in range(self.nPointings):
             started = time.perf_counter()
-            covariance, profile = self.fao.finite_aperture_covariance(sampling, field)
-            image, checks = sampling.psf(covariance, self.fao.finiteApertureBackend.stationary_high_lags)
+            residual, profile = self.fao.finite_aperture_residual(sampling, field)
+            image, checks = sampling.psf_blocks(residual.diagonal, residual.blocks())
             result = Field(self.wvlRef, self.N, self.grid_diameter)
             result.sampling = image
             result.residual_phase_variance = checks['residual_phase_variance']
             results.append(result)
             self.finiteApertureTimings.append(dict(seconds=time.perf_counter()-started, **profile, **checks))
         return results
+
+    def _validate_static_map_optics(self):
+        if self.nWvl != 1 or self.tipTiltRemoval != 'pupil_fit' or not self.fullFluxNormalization:
+            raise ValueError('Static-map optics currently require one wavelength, pupil_fit and full-flux output')
+        if self.LOisOn or self.jitter_FWHM is not None:
+            raise ValueError('Static-map optics have been validated only for HO-only predictions without jitter')
+        if self.nPixPSF != self.N or not np.isclose(self.overSamp,1.):
+            raise ValueError('Static-map optics currently require the native detector size and pixel sampling')
 
     def _finalize_full_field_results(self, astIndex):
         """

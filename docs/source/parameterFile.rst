@@ -359,19 +359,6 @@ We now go more in detail for each section:
 [sensor_HO]
 -----------
 
-With ``TipTiltRemoval='pupil_fit'``, optional
-``[telescope] StaticOnRmsCompensation=True`` compensates static-map resampling
-using the original/resampled intensity-weighted, piston-removed RMS ratio.
-It defaults to False and must be a boolean. Enabling it requires pupil-fit
-removal. The factor is recomputed on each wavelength's actual pupil grid and
-applies to both the static phase and its original-pupil tilt fit. The input
-OPD map, reconstruction and atmospheric spectrum are unchanged.
-
-This restores amplitude, not lost spatial structure. It covers the common map
-supplied by ``PathStaticOn``, not field-dependent ``PathStaticOff`` maps. Zero
-and omitted maps retain existing results. TIPTOP supplies the compensated map
-to MASTSEL's unchanged public optics API.
-
 ``TipTiltRemoval`` selects the P3 backend's tilt treatment:
 
 * ``'auto'`` (default): use ``'spectral'`` when ``[sensor_LO]`` is present,
@@ -458,6 +445,22 @@ read as overrides. Historical timing/exposure combinations require their
 frozen sources and configurations. Gain, frame rate and command delay remain
 explicit physical inputs under ``[RTC]``.
 
+For ``standard`` with ``TipTiltRemoval='pupil_fit'``, setting
+``[telescope] StaticOnRmsCompensation=True`` makes static-map resampling preserve the original intensity-weighted, piston-removed RMS using its measured
+original/resampled ratio. The factor is recomputed on each actual wavelength's
+pupil grid and applies to the phase and its original-pupil tilt fit together.
+The supplied OPD array, reconstruction and atmospheric spectrum are unchanged.
+This restores amplitude, not lost spatial structure. Other tilt-removal
+selections and omitted/zero maps retain their existing behavior. TIPTOP applies the ratio before
+calling MASTSEL's unchanged public optics API, separately for each actual
+wavelength grid. The map supplied by the caller stays unchanged.
+
+``StaticOnRmsCompensation`` defaults to False and must be a boolean. It applies
+only to the common map supplied by ``PathStaticOn`` in standard pupil-fit
+optics. Finite-aperture optics always uses RMS-preserving resampling, regardless
+of this option. It does not compensate field-dependent
+``PathStaticOff`` maps.
+
 With ``alias_aware``, channels are interleaved by guide star:
 ``g0-x, g0-y, g1-x, g1-y, ...``. ``NoiseVariance`` remains one per-axis
 variance per guide star in existing P3 units; both axes receive that guide's
@@ -471,15 +474,29 @@ zero HO noise, multiple equal-pitch Shack-Hartmann WFSs, equal-height LGSs
 above every layer, one ideal ground mirror, all physical reconstruction
 layers,
 ``TipTiltRemoval='pupil_fit'``, model-owned scalar POLC/instantaneous
-measurements and NCPA off. TIPTOP also requires
+measurements. ``PathStaticOn`` supplies deterministic nm OPD on the telescope
+pupil, with the same original-pupil tilt fit as the dynamic residual. Nonzero
+maps and zero/omitted maps all use the native optical pupil-pair quadrature
+and the same blocked covariance-to-PSF calculation. For static maps, the
+original-to-resampled intensity-weighted, piston-removed phase RMS ratio
+compensates the measured interpolation loss before the original-pupil tilt
+fit. This is a coarse-map approximation, not preservation of its complete
+wide-angle halo. This model-owned treatment is always applied and is independent of
+``StaticOnRmsCompensation``. It introduces no adjustable strength.
+The supplied map and reconstruction weights remain unchanged.
+The existing ``extraErrorNm`` spectrum
+is supported as an independent residual covariance, using the same
+normalization and pupil-fit removal as ordinary P3 optics; it does not apply
+a deterministic NCPA map. Set it to zero when the same aberration is supplied
+through ``PathStaticOn``. TIPTOP also requires
 ``fullFluxNormalization=True``. Unsupported combinations raise an error;
 MOAO, nonzero noise and other controllers have not been validated.
 
 P3's instance-owned reconstruction and optical caches are keyed by physical
 configuration, realized atmospheric/guide inputs, numerical policy and the
 original pupil fit. TIPTOP retains the native pupil diffraction and known
-high-frequency incoming covariance while using a reduced pupil-pair
-quadrature, sharing MASTSEL's public pupil-tilt fit coefficients with the
+high-frequency incoming covariance on its native optical quadrature,
+sharing MASTSEL's public pupil-tilt fit coefficients with the
 existing optics. Accuracy and cost must be validated for a new configuration.
 
 The finite residual has no equivalent diagonal PSD: ``PSD`` and ``opticalPSD``
