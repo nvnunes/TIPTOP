@@ -482,8 +482,7 @@ is correlated. Automatic noise follows the same mapping. Symmetric alias sums
 include ``-nTimes`` through ``+nTimes`` on both axes, excluding the target.
 This model does not couple different output Fourier frequencies.
 
-The initial supported contract is CPU, one science wavelength, HO-only,
-zero HO noise, multiple equal-pitch Shack-Hartmann WFSs, equal-height LGSs
+The supported HO contract is CPU, one science wavelength, zero HO noise, multiple equal-pitch Shack-Hartmann WFSs, equal-height LGSs
 above every layer, one ideal ground mirror, all physical reconstruction
 layers,
 ``TipTiltRemoval='pupil_fit'``, model-owned scalar POLC/instantaneous
@@ -504,6 +503,23 @@ a deterministic NCPA map. Set it to zero when the same aberration is supplied
 through ``PathStaticOn``. TIPTOP also requires
 ``fullFluxNormalization=True``. Unsupported combinations raise an error;
 MOAO, nonzero noise and other controllers have not been validated.
+
+TIPTOP can compose this HO prediction with MASTSEL's residual pointing
+covariance. With ``pupil_fit`` and full-flux output, TIPTOP forms separate
+native HO guide-star images at ``sources_LO.Wavelength`` and its configured
+directions. These images exclude the science-arm static map and extra error;
+their spot widths and circular sensor-aperture energies supply MASTSEL's
+centroid-noise model. Finite-aperture NGS images retain the finite residual
+covariance. The science PSF retains that same covariance and any deterministic
+static map, then receives the existing Gaussian pointing convolution.
+
+This handoff assumes independence between the tilt-removed HO residual and
+the remaining pointing error. Its tested scope is one-lenslet tilt sensing,
+without a focus loop, sensor-specific ``extraErrorLoNm`` or the optional extra
+LO alias-error contribution. Those unsupported inputs are rejected by the
+full-flux pupil-fit NGS path. Other tilt/normalization selections retain their
+existing NGS processing. Selecting LO does not add the removed HO tilt again
+or turn the finite residual into a diagonal PSD.
 
 P3's instance-owned reconstruction and optical caches are keyed by physical
 configuration, realized atmospheric/guide inputs, numerical policy and the

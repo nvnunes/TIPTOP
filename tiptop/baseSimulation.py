@@ -84,8 +84,10 @@ class baseSimulation(AbstractSimulation):
             self.my_data_map['sensor_HO'], self.my_data_map.get('RTC', {}))
         self.finiteApertureReconstruction = self.reconstructionModel == 'finite_aperture'
         if self.finiteApertureReconstruction:
-            if self.LOisOn or self.tipTiltRemoval != 'pupil_fit' or not self.fullFluxNormalization:
-                raise ValueError("ReconstructionModel=finite_aperture requires HO-only, pupil_fit and fullFluxNormalization=True")
+            if self.tipTiltRemoval != 'pupil_fit' or not self.fullFluxNormalization:
+                raise ValueError("ReconstructionModel=finite_aperture requires pupil_fit and fullFluxNormalization=True")
+            if self.LOisOn and (self.addFocusError or any(n != 1 for n in self.my_data_map['sensor_LO']['NumberLenslets'])):
+                raise ValueError('Finite-aperture LO integration currently supports one-lenslet tilt sensing without a focus loop')
             if self.savePSDs:
                 raise ValueError('ReconstructionModel=finite_aperture has no equivalent diagonal PSD export')
 
@@ -172,7 +174,7 @@ class baseSimulation(AbstractSimulation):
         # Pass config_dict so P3 uses TIPTOP's already-modified my_data_map directly,
         # without re-reading the file. path_root lets P3 resolve 'tiptop/...' aux files.
         self.fao = fourierModel(self.fullPathFilename, calcPSF=False, verbose=self.verbose,
-                                display=False, getPSDatNGSpositions=self.LOisOn,
+                                display=False, getPSDatNGSpositions=self.LOisOn and not self._independent_ngs_optics(),
                                 computeFocalAnisoCov=False,
                                 TiltFilter=self.tipTiltRemoval == 'spectral',
                                 computeOpticalPSD=self.tipTiltRemoval == 'pupil_fit',
@@ -483,41 +485,22 @@ class baseSimulation(AbstractSimulation):
 
     def _finite_aperture_psfs(self):
         """Compose P3 finite covariance with TIPTOP's nonstationary optics."""
-        from .finite_pupil import FinitePupilSampling
-        from .static_phase import static_phase_rms_scale
-        import time
+        from .ho_optics import finite_pupil_fields
         if self.nWvl != 1:
             raise ValueError('ReconstructionModel=finite_aperture currently requires one wavelength')
-        period = 1/float(self.fao.freq.kxAO_[1, 0]-self.fao.freq.kxAO_[0, 0])
-        phase = None if self.opdMap is None else cpuArray(self.opdMap)*(2*np.pi*1e-9/self.wvlRef)
-        if phase is not None and np.any(phase):
+        if self.opdMap is not None and np.any(cpuArray(self.opdMap)):
             self._validate_static_map_optics()
-        self.finiteApertureStaticRmsScale = 1.
-        if phase is not None:
-            self.finiteApertureStaticRmsScale = static_phase_rms_scale(
-                cpuArray(self.fao.ao.tel.pupil),phase,self.sx)
-        if phase is not None:
-            phase = phase*self.finiteApertureStaticRmsScale
-        sampling = FinitePupilSampling(cpuArray(self.fao.ao.tel.pupil), self.N, self.sx, period,
-            static_phase=phase)
-        self.finiteApertureTimings = []
-        results = []
-        for field in range(self.nPointings):
-            started = time.perf_counter()
-            residual, profile = self.fao.finite_aperture_residual(sampling, field)
-            image, checks = sampling.psf_blocks(residual.diagonal, residual.blocks())
-            result = Field(self.wvlRef, self.N, self.grid_diameter)
-            result.sampling = image
-            result.residual_phase_variance = checks['residual_phase_variance']
-            results.append(result)
-            self.finiteApertureTimings.append(dict(seconds=time.perf_counter()-started, **profile, **checks))
-        return results
+        period = 1/float(self.fao.freq.kxAO_[1,0]-self.fao.freq.kxAO_[0,0])
+        images, self.finiteApertureTimings, self.finiteApertureStaticRmsScale = finite_pupil_fields(
+            self.fao, cpuArray(self.fao.ao.tel.pupil), self.opdMap,
+            self.N, self.sx, period, range(self.nPointings))
+        return images
 
     def _validate_static_map_optics(self):
         if self.nWvl != 1 or self.tipTiltRemoval != 'pupil_fit' or not self.fullFluxNormalization:
             raise ValueError('Static-map optics currently require one wavelength, pupil_fit and full-flux output')
-        if self.LOisOn or self.jitter_FWHM is not None:
-            raise ValueError('Static-map optics have been validated only for HO-only predictions without jitter')
+        if self.jitter_FWHM is not None:
+            raise ValueError('Static-map optics currently require no additional jitter')
         if self.nPixPSF != self.N or not np.isclose(self.overSamp,1.):
             raise ValueError('Static-map optics currently require the native detector size and pixel sampling')
 
@@ -679,8 +662,42 @@ class baseSimulation(AbstractSimulation):
     # --- P3-SPECIFIC HELPER METHODS ---
     # ----------------------------------------------------------------------------
 
+    def _independent_ngs_optics(self):
+        """Use the same full-flux pupil-fit HO optics as standalone NGS science.
+
+        Science static aberrations belong to the science arm. The guide-star
+        optics are formed at their own wavelength, without that static map.
+        Legacy optical selections keep their existing NGS handoff.
+        """
+        return self.tipTiltRemoval == 'pupil_fit' and self.fullFluxNormalization
+
     def _compute_ngs_psf(self):
-        """Generates analytical PSFs for the NGS directions."""
+        """Generate the guide-star images and MASTSEL sensor-energy inputs."""
+        if self._independent_ngs_optics():
+            from .ho_optics import guide_star_optics
+            if self.addFocusError or any(n != 1 for n in self.my_data_map['sensor_LO']['NumberLenslets']):
+                raise ValueError('Full-flux pupil-fit NGS optics currently supports one-lenslet tilt sensing without a focus loop')
+            images, native, provenance = guide_star_optics(self)
+            self.ngsPsfFields = images
+            self.ngsOpticsProvenance = provenance
+            self.NGS_SR_field, self.NGS_FWHM_mas_field, self.NGS_EE_field = [], [], []
+            scale = provenance['pixel_scale_mas']
+            for img in images:
+                self.NGS_SR_field.append(float(np.exp(-img.residual_phase_variance)))
+                fx, fy = getFWHM(arrayMastseltoP3(img.sampling), scale, method='contour', nargout=2)
+                width = float(np.sqrt(fx*fy)); self.NGS_FWHM_mas_field.append(width)
+                # MASTSEL scales its Gaussian centroid model by the physical
+                # flux fraction inside max(FWHM, detector pixel), in mas.
+                # Do not renormalize a finite crop to its enclosed flux.
+                energy, radius = getEncircledEnergy(arrayMastseltoP3(img.sampling),
+                    pixelscale=scale, center=centeredPixelCoords(img.sampling.shape[0]), nargout=2)
+                pixel = self.LO_psInMas[len(self.NGS_EE_field)]
+                target = min(float(radius[-1]), max(width, pixel))
+                self.NGS_EE_field.append(float(interp1d(radius, energy, kind='cubic')(target)))
+            self.NGS_DL_FWHM_mas = None
+            if self.addLoAlias:
+                raise ValueError('Full-flux pupil-fit NGS optics has not validated the optional LO alias-error model')
+            return
         LO_PSFsInMas = self.psInMas * self.LO_wvl / self.wvlMax
 
         if LO_PSFsInMas / np.min(self.LO_psInMas) > 1 and self.overSamp_lo > 1:

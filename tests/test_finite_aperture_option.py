@@ -21,7 +21,6 @@ def test_reconstruction_model_is_selected_before_execution(tmp_path, model):
 
 
 @pytest.mark.parametrize('lo,method,full_flux,save_psds,message', [
-    (True, 'pupil_fit', True, False, 'HO-only'),
     (False, 'none', True, False, 'pupil_fit'),
     (False, 'pupil_fit', False, False, 'fullFluxNormalization'),
     (False, 'pupil_fit', True, True, 'diagonal PSD'),
@@ -66,8 +65,7 @@ def test_tiptop_rejects_retired_timing_before_native_execution(tmp_path, model, 
 @pytest.mark.parametrize('name,value,message',[
     ('nPixPSF',8,'native detector'),
     ('overSamp',2.,'native detector'),
-    ('LOisOn',True,'HO-only'),
-    ('jitter_FWHM',1.,'without jitter'),
+    ('jitter_FWHM',1.,'additional jitter'),
 ])
 def test_native_static_map_preserves_supported_scope(name,value,message):
     simulation=object.__new__(baseSimulation)
@@ -103,7 +101,7 @@ def test_finite_static_optics_preserves_rms_independently_of_standard_option():
     for setting in (None,False,True):
         simulation=object.__new__(baseSimulation)
         simulation.nWvl=1;simulation.wvlRef=wavelength
-        simulation.fao=SimpleNamespace(freq=SimpleNamespace(kxAO_=np.array([[0.,0.],[.25,.25]])),
+        simulation.fao=SimpleNamespace(freq=SimpleNamespace(wvlRef=wavelength,kxAO_=np.array([[0.,0.],[.25,.25]])),
             ao=SimpleNamespace(tel=SimpleNamespace(pupil=pupil)),finite_aperture_residual=zero_residual)
         simulation.opdMap=phase*wavelength/(2*np.pi*1e-9)
         simulation.tipTiltRemoval='pupil_fit';simulation.fullFluxNormalization=True
@@ -128,3 +126,18 @@ def test_finite_static_optics_preserves_rms_independently_of_standard_option():
     expected=abs(fft.fftshift(fft.fft2(wave)))**2
     expected/=expected.sum()
     np.testing.assert_allclose(images[0],expected,rtol=1e-11,atol=2e-14)
+
+
+def test_finite_aperture_accepts_one_lenslet_tilt_handoff(tmp_path):
+    simulation = _simulation(tmp_path, True, fullFluxNormalization=True,
+        config_updates={'sensor_HO': {'TipTiltRemoval': "'pupil_fit'",
+            'ReconstructionModel': "'finite_aperture'"}})
+    assert simulation.LOisOn and simulation._independent_ngs_optics()
+
+
+def test_finite_aperture_rejects_unvalidated_focus_loop(tmp_path):
+    with pytest.raises(ValueError, match='without a focus loop'):
+        _simulation(tmp_path, True, fullFluxNormalization=True,
+            config_updates={'telescope': {'glFocusOnNGS': 'True'},
+                'sensor_HO': {'TipTiltRemoval': "'pupil_fit'",
+                    'ReconstructionModel': "'finite_aperture'"}})
