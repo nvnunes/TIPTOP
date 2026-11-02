@@ -60,3 +60,27 @@ def test_budget_keeps_native_lo_reporting_separate(tmp_path, capsys):
     # HO reporting does not depend on LO being available or on its magnitude.
     sim.LO_res = None
     assert sim.errorBreakDown(verbose=False) == records
+
+
+def test_original_map_optics_attaches_static_variance_without_changing_psfs(tmp_path):
+    from astropy.io import fits
+    from tiptop.baseSimulation import baseSimulation
+    build(tmp_path, False, model='finite_aperture')
+    y, x = np.mgrid[:64, :64]
+    path = tmp_path/'opd.fits'
+    fits.writeto(path,20*np.sin(x/7)+10*np.cos(y/9))
+    config = ConfigParser(); config.optionxform = str
+    config.read(tmp_path/'optional.ini')
+    config['telescope']['PathStaticOn'] = repr(str(path))
+    with (tmp_path/'optional.ini').open('w') as stream:
+        config.write(stream)
+    sim = baseSimulation(str(tmp_path),'optional',str(tmp_path),'unused',
+        fullFluxNormalization=True,getHoErrorBreakDown=True)
+    sim.doOverallSimulation(skipMerit=True,skipPSF1D=True)
+    before = np.array([field.sampling for field in sim.psfLongExpPointingsArr])
+    assert all(record.ncpa_nm2 > 0 for record in sim.hoErrorBreakDown.values())
+    assert all(record.first_stage.ncpa_nm2 == record.ncpa_nm2
+               for record in sim.hoErrorBreakDown.values())
+    sim.fao.getErrorBreakDown = False
+    after = sim._finite_aperture_psfs()
+    np.testing.assert_array_equal(before,[field.sampling for field in after])

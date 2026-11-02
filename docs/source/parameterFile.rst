@@ -465,8 +465,9 @@ wavelength grid. The map supplied by the caller stays unchanged.
 
 ``StaticOnRmsCompensation`` defaults to False and must be a boolean. It applies
 only to the common map supplied by ``PathStaticOn`` in standard pupil-fit
-optics. Finite-aperture optics always uses RMS-preserving resampling, regardless
-of this option. It does not compensate field-dependent
+optics. Finite-aperture optics uses the original static OTF and complex-cell
+pupil weights with its full nonstationary atmospheric covariance, regardless
+of this option. It does not rescale the supplied map. This option does not compensate field-dependent
 ``PathStaticOff`` maps. Alias-aware original-static-OTF optics does not resample
 that phase map and is unaffected by this option.
 
@@ -555,6 +556,15 @@ TIPTOP reports finite pupil-removed residual variance and full-flux PSFs;
 PSD export is rejected for this option. Direct P3 callers use
 ``calcPSF=False``, ``reduce_memory=False`` and
 ``finite_aperture_covariance`` with an optics sampling contract.
+
+With nonzero ``PathStaticOn``, TIPTOP retains the original-map diffraction and
+estimates its atmospheric transfer from complex pupil averages on the unchanged
+native optical covariance grid. Pupil-fit coefficients use the original pupil.
+This is approximate for nonstationary static/atmospheric coupling; the static
+limit is exact. Unsupported original-map sampling or negative final intensity
+raises an error rather than being clipped. Zero maps retain the existing
+NCPA-off calculation. The numerical original-map lattice must be even and
+commensurate with the atmospheric Fourier period. No additional option is used.
 
 The High Order WaveFront Sensor can be a pyramid WFS or a Shack-Hartmann. Regardless of the WFS, the following parameters can de defined.
 

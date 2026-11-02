@@ -19,19 +19,34 @@ from .tiptopUtils import arrayP3toMastsel, cpuArray
 def finite_pupil_fields(native, pupil, opd, n, side, period, fields):
     """Evaluate the finite residual covariance without a diagonal PSD handoff."""
     from .finite_pupil import FinitePupilSampling
-    from .static_phase import static_phase_rms_scale
     wavelength = float(native.freq.wvlRef)
     phase = None if opd is None else cpuArray(opd)*(2*np.pi*1e-9/wavelength)
-    scale = 1. if phase is None else static_phase_rms_scale(pupil, phase, side)
-    sampling = FinitePupilSampling(pupil, n, side, period,
-        static_phase=None if phase is None else phase*scale)
+    static = None
+    if phase is not None and np.any(phase):
+        from .finite_static import FiniteStaticOptics
+        static = FiniteStaticOptics(pupil, phase, float(native.ao.tel.D), n, side, period)
+        sampling = static.sampling
+    else:
+        sampling = FinitePupilSampling(pupil, n, side, period)
     images, profiles = [], []
+    prepared = False
     for field in fields:
         started = time.perf_counter()
         residual, profile = native.finite_aperture_residual(sampling, field)
-        image, checks = sampling.psf_blocks(residual.diagonal, residual.blocks())
+        if static is None:
+            image, checks = sampling.psf_blocks(residual.diagonal, residual.blocks())
+        else:
+            if not prepared:
+                seconds = static.prepare_high(native._finite_aperture_backend())
+                profile = dict(profile, static_optics_preparation_seconds=static.preparation_seconds,
+                               static_source_preparation_seconds=seconds)
+                prepared = True
+            image, checks = static.psf_blocks(residual.diagonal, residual.blocks())
         if getattr(native, 'getErrorBreakDown', False):
             budget = native.finiteErrorBreakDown[field]
+            if static is not None:
+                budget = budget.with_optics(ncpa_nm2=static.static_variance*(wavelength*1e9/(2*np.pi))**2)
+                native.finiteErrorBreakDown[field] = budget
             optical = checks['residual_phase_variance']*(wavelength*1e9/(2*np.pi))**2
             tolerance = 2e-5 if native.finiteApertureBackend == 'mps' else 1e-8
             if not np.isclose(budget.dynamic_ho_nm2, optical, rtol=tolerance, atol=1e-6):
@@ -42,7 +57,8 @@ def finite_pupil_fields(native, pupil, opd, n, side, period, fields):
         result.residual_phase_variance = checks['residual_phase_variance']
         images.append(result)
         profiles.append(dict(seconds=time.perf_counter()-started, **profile, **checks))
-    return images, profiles, scale
+    # No map-amplitude rescaling is applied by the original-static-OTF path.
+    return images, profiles, 1.
 
 
 def guide_star_optics(simulation):

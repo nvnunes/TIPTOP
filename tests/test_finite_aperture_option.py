@@ -80,16 +80,17 @@ def test_native_static_map_preserves_supported_scope(name,value,message):
         simulation._finite_aperture_psfs()
 
 
-def test_finite_static_optics_preserves_rms_independently_of_standard_option():
-    """Model-owned resampling is identical for omitted, false and true flags."""
-    from mastsel import pupilTiltFit, congrid, padOrCropCentered
+def test_finite_static_optics_preserves_original_map_independently_of_standard_option(monkeypatch):
+    """Static-only original diffraction is identical for every standard RMS flag."""
     from scipy import fft
-    from tiptop.static_phase import static_phase_rms_scale
+    from tiptop.finite_static import FiniteStaticOptics
+    from tiptop.static_map import OriginalPupilSampling
+    # The fixture below supplies exactly zero atmospheric covariance.
+    monkeypatch.setattr(FiniteStaticOptics, 'prepare_high', lambda self, backend: 0.)
     y,x=np.mgrid[:16,:16]
     pupil=(((x-7.5)**2+(y-7.5)**2<7**2)&((x-7.5)**2+(y-7.5)**2>2**2)).astype(float)
     phase=.5*np.sin(1.9*x)*np.cos(.8*y)+.03*x
     wavelength=1.2e-6
-    expected_scale=static_phase_rms_scale(pupil,phase,8)
 
     def zero_residual(sampling, field):
         size=len(sampling.xs)
@@ -103,7 +104,8 @@ def test_finite_static_optics_preserves_rms_independently_of_standard_option():
         simulation.getHoErrorBreakDown=False
         simulation.nWvl=1;simulation.wvlRef=wavelength
         simulation.fao=SimpleNamespace(freq=SimpleNamespace(wvlRef=wavelength,kxAO_=np.array([[0.,0.],[.25,.25]])),
-            ao=SimpleNamespace(tel=SimpleNamespace(pupil=pupil)),finite_aperture_residual=zero_residual)
+            ao=SimpleNamespace(tel=SimpleNamespace(pupil=pupil,D=1.)),
+            finite_aperture_residual=zero_residual,_finite_aperture_backend=lambda:None)
         simulation.opdMap=phase*wavelength/(2*np.pi*1e-9)
         simulation.tipTiltRemoval='pupil_fit';simulation.fullFluxNormalization=True
         simulation.LOisOn=False;simulation.jitter_FWHM=None
@@ -112,20 +114,16 @@ def test_finite_static_optics_preserves_rms_independently_of_standard_option():
         if setting is not None:
             simulation.staticOnRmsCompensation=setting
         image=simulation._finite_aperture_psfs()[0].sampling
-        np.testing.assert_allclose(simulation.finiteApertureStaticRmsScale,expected_scale,rtol=2e-15)
+        assert simulation.finiteApertureStaticRmsScale == 1.
         images.append(image)
     np.testing.assert_array_equal(images[0],images[1])
     np.testing.assert_array_equal(images[0],images[2])
 
-    # Independent static-only diffraction after the compensated original fit.
-    phase=phase*expected_scale
-    coefficients=np.einsum('iyx,yx->i',pupilTiltFit(pupil),phase)
-    coarse=congrid(phase,[8,8]);a=np.arange(8)-4
-    coarse=coarse-coefficients[0]*(2*a[None]/8+1/16)
-    coarse=coarse-coefficients[1]*(2*a[:,None]/8+1/16)
-    wave=padOrCropCentered(congrid(pupil,[8,8])*np.exp(1j*coarse),32,np)
-    expected=abs(fft.fftshift(fft.fft2(wave)))**2
-    expected/=expected.sum()
+    original = OriginalPupilSampling(pupil,phase,1.,4.,32)
+    wave = np.zeros((64,64),complex)
+    wave[original.ys,original.xs]=original.amplitude*original._static_phasor
+    expected=abs(fft.fftshift(fft.fft2(wave)))**2/(64**2*np.sum(abs(wave)**2))
+    expected=original.detector_crop(expected)
     np.testing.assert_allclose(images[0],expected,rtol=1e-11,atol=2e-14)
 
 
