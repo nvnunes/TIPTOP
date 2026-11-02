@@ -476,7 +476,7 @@ public pupil-fit coefficients are reused; its LO model and optics API are
 unchanged. A nonzero ``PathStaticOn`` retains the original
 static OTF and estimates its dynamic pupil-fit transfer using complex-cell
 averages. It requires one wavelength, pupil-fit removal, full-flux output,
-HO-only operation without jitter and native detector sampling. Its accuracy
+operation without additional jitter and native detector sampling. Its accuracy
 has been checked for the retained broad atmospheric spectra. The OTF ratio is
 an approximation and need not preserve positive definiteness for arbitrary
 narrow spectra; nonpositive optical results raise an error rather than being
@@ -496,7 +496,7 @@ layer, all physical reconstruction layers, and one common Gaussian ground mirror
 It uses ``TipTiltRemoval='pupil_fit'`` and model-owned POLC/instantaneous
 measurements, including the feedback introduced by LGS mean-slope projection.
 Paired science mirror/controller sections add a directional Gaussian ground
-mirror for HO-only MOAO. Reconstruction runs on CPU; optional CUDA/Metal covariance
+mirror for MOAO. Reconstruction runs on CPU; optional CUDA/Metal covariance
 products for active two-stage finite aperture are described in :doc:`twoStageFourier`.
 
 ``PathStaticOn`` supplies deterministic nm OPD on the telescope
@@ -515,13 +515,13 @@ normalization and pupil-fit removal as ordinary P3 optics; it does not apply
 a deterministic NCPA map. Set it to zero when the same aberration is supplied
 through ``PathStaticOn``. TIPTOP also requires
 ``fullFluxNormalization=True``. Unsupported combinations raise an error;
-Nonzero HO noise and other controllers have not been validated. Active science
-correction cannot yet be combined with LO.
+nonzero HO noise and other controllers have not been validated.
 
-For single-stage LTAO, TIPTOP can compose this HO prediction with MASTSEL's residual pointing
+For single-stage LTAO and two-stage MOAO, TIPTOP can compose this HO prediction with MASTSEL's residual pointing
 covariance. With ``pupil_fit`` and full-flux output, TIPTOP forms separate
 native HO guide-star images at ``sources_LO.Wavelength`` and its configured
-directions. These images exclude the science-arm static map and extra error;
+directions. These images use only the common mirror and exclude the directional
+science mirror, science-arm static map and extra error;
 their spot widths and circular sensor-aperture energies supply MASTSEL's
 centroid-noise model. Finite-aperture NGS images retain the finite residual
 covariance. The science PSF retains that same covariance and any deterministic
@@ -929,7 +929,9 @@ common ``RTC.SensorFrameRate_HO`` clock. It is not another integrator.
 Omit both sections for single-stage LTAO. ``LoopGain_HO=0`` is the science-off
 control and does not load science geometry. Active science correction supports
 ``alias_aware`` or ``finite_aperture`` with zero injected HO noise, an active
-common POLC, science pitch at least the common pitch, and HO-only TIPTOP.
+common POLC and science pitch at least the common pitch. HO+LO additionally
+requires ``TipTiltRemoval='pupil_fit'``, ``fullFluxNormalization=True``,
+one-lenslet NGS tilt sensing and no focus loop.
 See :doc:`twoStageFourier` for the two-stage calculation and numerical backend.
 
 [COMPUTATION]

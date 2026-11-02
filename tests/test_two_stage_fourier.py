@@ -20,6 +20,8 @@ def build(path, lo_on, model="alias_aware", backend="numpy"):
     # before constructing the actual test simulation.
     _simulation(path, lo_on, fullFluxNormalization=True,
                 config_updates={'sensor_HO': _SETTINGS['sensor_HO'],
+                                'telescope': {'glFocusOnNGS': 'False'},
+                                'sensor_science': {'PixelScale': repr(1.65e-6*206264806.24709636/16)},
                                 'DM': {'NumberReconstructedLayers': '10'}})
     config = ConfigParser()
     config.optionxform = str
@@ -45,9 +47,59 @@ def test_native_coupled_psds_reach_existing_optics(tmp_path):
     np.testing.assert_allclose(simulation.cubeResultsArray.sum((-1,-2)), 1., atol=1e-12)
 
 
-def test_unvalidated_lo_combination_is_rejected(tmp_path):
-    with pytest.raises(ValueError, match='HO-only'):
-        build(tmp_path, True)
+@pytest.mark.parametrize('model', ['alias_aware', 'finite_aperture'])
+def test_lo_uses_common_ngs_and_preserves_science_ho(tmp_path, model):
+    science = build(tmp_path/'science', True, model=model)
+    science.doOverallSimulation(skipMerit=True, skipPSF1D=True)
+    ho_only = build(tmp_path/'ho', False, model=model)
+    ho_only.doOverallSimulation(skipMerit=True, skipPSF1D=True)
+    assert science.twoStageEnabled and science.LOisOn
+    assert not science.ngsOpticsProvenance['science_mirror_applied']
+    for actual, expected in zip(science.psfLongExpPointingsArr, ho_only.psfLongExpPointingsArr):
+        np.testing.assert_array_equal(actual.sampling, expected.sampling)
+    assert np.isfinite(science.cubeResultsArray).all()
+    np.testing.assert_allclose(science.cubeResultsArray.sum((-1,-2)), 1., atol=1e-12)
+    assert np.linalg.eigvalsh(science._Ctot_temp).min() >= -1e-10
+
+
+@pytest.mark.parametrize('model', ['alias_aware', 'finite_aperture'])
+def test_science_off_recovers_ltao_lo(tmp_path, model):
+    from configparser import ConfigParser
+    instances=[]
+    for name in ('disabled', 'absent'):
+        path=tmp_path/name
+        build(path, True, model=model)
+        config=ConfigParser();config.optionxform=str;config.read(path/'optional.ini')
+        if name=='disabled':
+            config['RTC_science']['LoopGain_HO']='0.'
+        else:
+            config.remove_section('DM_science');config.remove_section('RTC_science')
+        with (path/'optional.ini').open('w') as stream:config.write(stream)
+        simulation=baseSimulation(str(path),'optional',str(path),'unused',
+            fullFluxNormalization=True,getHoErrorBreakDown=False)
+        simulation.doOverallSimulation(skipMerit=True,skipPSF1D=True)
+        instances.append(simulation)
+    for actual,expected in zip(instances[0].results,instances[1].results):
+        np.testing.assert_array_equal(actual.sampling,expected.sampling)
+    np.testing.assert_array_equal(instances[0]._Ctot_temp,instances[1]._Ctot_temp)
+    for actual,expected in zip(instances[0].ngsPsfFields,instances[1].ngsPsfFields):
+        np.testing.assert_array_equal(actual.sampling,expected.sampling)
+
+
+@pytest.mark.parametrize('model', ['alias_aware', 'finite_aperture'])
+@pytest.mark.parametrize('change,message', [
+    ('normalization','fullFluxNormalization'), ('tilt','pupil_fit'),
+    ('focus','focus'), ('lenslets','one-lenslet')])
+def test_science_lo_scope_is_explicit(tmp_path, model, change, message):
+    build(tmp_path, True, model=model)
+    config=ConfigParser();config.optionxform=str;config.read(tmp_path/'optional.ini')
+    if change=='tilt':config['sensor_HO']['TipTiltRemoval']="'spectral'"
+    elif change=='focus':config['telescope']['glFocusOnNGS']='True'
+    elif change=='lenslets':config['sensor_LO']['NumberLenslets']='[2, 2, 2]'
+    with (tmp_path/'optional.ini').open('w') as stream:config.write(stream)
+    with pytest.raises(ValueError,match=message):
+        baseSimulation(str(tmp_path),'optional',str(tmp_path),'unused',
+            fullFluxNormalization=change!='normalization',getHoErrorBreakDown=False)
 
 
 @pytest.mark.parametrize('backend', ['numpy', 'cuda', 'mps'])

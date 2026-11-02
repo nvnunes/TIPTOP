@@ -1,9 +1,10 @@
 """Native HO optics shared by science and one-lenslet guide-star sensing.
 
-The sensor uses the same configured reconstruction as science. Its atmosphere
+The sensor uses the configured common-mirror reconstruction. Its atmosphere
 is evaluated at the sensing wavelength and directions, with fitted pupil tilt
 removed, and without science-arm static aberrations. No LO covariance is used
-while forming these images; MASTSEL applies the resulting sensor noise and
+while forming these images. Directional science mirrors do not lie in the
+guide-star sensing path. MASTSEL applies the resulting sensor noise and
 anisoplanatic/temporal tilt covariance in the subsequent LO stage.
 """
 from copy import deepcopy
@@ -41,6 +42,9 @@ def guide_star_optics(simulation):
     """Build a normal native HO model at the NGS wavelength and directions."""
     started = time.perf_counter()
     config = deepcopy(simulation.my_data_map)
+    # Guide stars see the common mirror, before any directional science arm.
+    config.pop('DM_science', None)
+    config.pop('RTC_science', None)
     wavelength = float(simulation.LO_wvl)
     if np.any(np.asarray(config['telescope'].get('extraErrorLoNm', 0.)) != 0):
         raise ValueError('Pupil-fit NGS optics has not validated sensor-specific extraErrorLoNm')
@@ -81,4 +85,5 @@ def guide_star_optics(simulation):
     return images, native, dict(seconds=time.perf_counter()-started,
         wavelength_m=wavelength, pixel_scale_mas=float(config['sensor_science']['PixelScale']),
         static_map_applied=False, full_flux=True, finite_profiles=profiles,
+        correction='common', science_mirror_applied=False,
         image_size=n, pupil_size=side)

@@ -9,9 +9,13 @@ direct residual-command multiplier and integer delay on the common HO clock;
 it is not a second integrator. Omit both sections for single-stage LTAO.
 
 P3 owns mirror fitting, command coupling and residual covariance. TIPTOP retains
-its full-flux pupil-fit/static-map optics. Active science correction currently
-requires HO-only predictions. Single-stage finite aperture keeps its validated
-one-lenslet MASTSEL handoff.
+its full-flux pupil-fit/static-map optics. Active science correction supports
+HO-only predictions and MASTSEL HO+LO with ``TipTiltRemoval='pupil_fit'``,
+``fullFluxNormalization=True``, one-lenslet NGS tilt sensing and no focus loop.
+NGS images use only the common mirror, excluding the directional science
+mirror and science static map. MASTSEL's existing pointing covariance is
+then convolved with the two-stage science PSF. This retains the assumption
+that residual pointing and the tilt-removed HO structure are independent.
 
 Finite aperture uses physical Gaussian surfaces via existing ``InfModel`` and
 ``InfCoupling``. Optional ``PathInfGeometry`` FITS files override the

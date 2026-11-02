@@ -92,7 +92,10 @@ class baseSimulation(AbstractSimulation):
         self.finiteApertureBackend = covariance_backend(finiteApertureBackend,
             self.reconstructionModel, science)
         if self.twoStageEnabled and self.LOisOn:
-            raise ValueError('Science correction currently supports HO-only TIPTOP predictions; disable LO')
+            if not self._independent_ngs_optics():
+                raise ValueError('Science-correction LO integration requires pupil_fit and fullFluxNormalization=True')
+            if self.addFocusError or any(n != 1 for n in self.my_data_map['sensor_LO']['NumberLenslets']):
+                raise ValueError('Science-correction LO integration supports one-lenslet tilt sensing without a focus loop')
         self.finiteApertureReconstruction = self.reconstructionModel == 'finite_aperture'
         if self.finiteApertureReconstruction:
             if self.tipTiltRemoval != 'pupil_fit' or not self.fullFluxNormalization:

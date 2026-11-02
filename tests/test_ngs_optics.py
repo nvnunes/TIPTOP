@@ -9,6 +9,7 @@ def test_guide_sensor_excludes_science_static_map_and_preserves_parent(monkeypat
     config=dict(telescope=dict(PathStaticOn='science.fits',extraErrorNm=120.,
             StaticOnRmsCompensation=True),sensor_science=dict(PixelScale=6.),
         sources_science=dict(Wavelength=[1.2e-6],Zenith=[0.],Azimuth=[0.]),
+        DM_science=dict(DmPitchs=[1.]),RTC_science=dict(LoopGain_HO=1.),
         sensor_HO=dict(GridOffsets=[[.2,.2]],ReconstructionModel='alias_aware'),
         sources_LO={},sensor_LO={},RTC={})
     before=deepcopy(config);record={}
@@ -30,8 +31,10 @@ def test_guide_sensor_excludes_science_static_map_and_preserves_parent(monkeypat
     assert record['telescope']['PathStaticOn']==''
     assert record['telescope']['extraErrorNm']==0.
     assert 'sensor_LO' not in record and 'sources_LO' not in record
+    assert 'DM_science' not in record and 'RTC_science' not in record
     assert record['sensor_HO']==before['sensor_HO']
     assert provenance['static_map_applied'] is False
+    assert provenance['science_mirror_applied'] is False
 
 
 def test_sensor_specific_extra_error_is_not_silently_discarded():
