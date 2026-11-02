@@ -30,6 +30,13 @@ def finite_pupil_fields(native, pupil, opd, n, side, period, fields):
         started = time.perf_counter()
         residual, profile = native.finite_aperture_residual(sampling, field)
         image, checks = sampling.psf_blocks(residual.diagonal, residual.blocks())
+        if getattr(native, 'getErrorBreakDown', False):
+            budget = native.finiteErrorBreakDown[field]
+            optical = checks['residual_phase_variance']*(wavelength*1e9/(2*np.pi))**2
+            tolerance = 2e-5 if native.finiteApertureBackend == 'mps' else 1e-8
+            if not np.isclose(budget.dynamic_ho_nm2, optical, rtol=tolerance, atol=1e-6):
+                raise ValueError('Finite error budget does not close against the optical residual')
+            profile = dict(profile, error_budget_optical_closure_nm2=budget.dynamic_ho_nm2-optical)
         result = Field(wavelength, n, period)
         result.sampling = image
         result.residual_phase_variance = checks['residual_phase_variance']

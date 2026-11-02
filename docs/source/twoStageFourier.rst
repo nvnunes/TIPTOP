@@ -36,3 +36,41 @@ is not an INI physics option.
 See P3's ``docs/two-stage-fourier.md`` for the science RTC and supported scope,
 and ``docs/mirror-surfaces.md`` for the FITS geometry contract. Retired experimental
 keys are rejected; historical experiments use their retained sources.
+
+Finite-aperture error budget
+---------------------------
+
+``baseSimulation(..., getHoErrorBreakDown=True)`` enables TIPTOP-style
+finite-aperture LTAO/MOAO reporting. After simulation,
+``simulation.errorBreakDown()`` prints the evaluated science direction nearest
+the axis and returns a field mapping. Each immutable result supports
+``as_dict()``. ``simulation.hoErrorBreakDown`` holds the same HO records.
+LO remains in TIPTOP's existing separate ``LO_res [nm]`` output and is excluded
+from the breakdown rows and totals.
+
+MOAO prints two columns: ``LTAO: first stage`` and ``MOAO: both stages``.
+``result.first_stage`` exposes the former at the same science direction, with
+the actual common correction retained and only the science-mirror correction
+removed. No new common reconstructor or second simulation is needed. Both
+columns receive the same science-plane NCPA, isolating the HO change. Standalone LTAO results have ``first_stage=None``.
+
+Rows are NCPA, fitting, differential refraction, chromatism, aliasing, noise,
+spatio-temporal error and extra error. Fitting
+uses TIPTOP's existing correction-band cutoff. In-band limitations of the
+coarser science mirror remain in spatio-temporal error. Aliasing is the joint
+correction driven by above-band inputs, following the GIRMOS input-band
+convention rather than Fourier replica bookkeeping. Both actual mirrors,
+controllers and their correlations are retained.
+
+The signed fitting–aliasing covariance is printed separately in nm². It is
+included in the residual total but excluded from the displayed quadrature
+total. ``dynamic_ho_nm2`` closes against ``HO_res**2``. ``total_nm2`` additionally
+includes the applied NCPA variance; it excludes LO.
+NCPA is measured after the same resampling, compensation and tilt removal used
+by the optics; it is not injected into atmospheric covariance.
+
+The flag changes no PSF and adds no INI setting. Nonzero physical HO noise
+remains unsupported by the finite model. Conventional Fourier reporting stays
+unchanged. ``finiteApertureTimings`` records ``error_budget_seconds`` and
+``error_budget_optical_closure_nm2``. See P3's ``docs/finite-error-budget.md`` for
+definitions, units, caching and limitations.

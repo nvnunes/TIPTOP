@@ -100,6 +100,7 @@ class baseSimulation(AbstractSimulation):
             if self.addFocusError or any(n != 1 for n in self.my_data_map['sensor_LO']['NumberLenslets']):
                 raise ValueError('Science-correction LO integration supports one-lenslet tilt sensing without a focus loop')
         self.finiteApertureReconstruction = self.reconstructionModel == 'finite_aperture'
+        self.hoErrorBreakDown = {}
         if self.finiteApertureReconstruction:
             if self.tipTiltRemoval != 'pupil_fit' or not self.fullFluxNormalization:
                 raise ValueError("ReconstructionModel=finite_aperture requires pupil_fit and fullFluxNormalization=True")
@@ -511,7 +512,29 @@ class baseSimulation(AbstractSimulation):
         images, self.finiteApertureTimings, self.finiteApertureStaticRmsScale = finite_pupil_fields(
             self.fao, cpuArray(self.fao.ao.tel.pupil), self.opdMap,
             self.N, self.sx, period, range(self.nPointings))
+        self.hoErrorBreakDown = (self.fao.errorBreakDown(verbose=False)
+                                 if self.getHoErrorBreakDown else {})
+        if self.getHoErrorBreakDown and self.verbose:
+            self.errorBreakDown()
         return images
+
+    def errorBreakDown(self, verbose=True):
+        """Return finite HO field budgets with applied NCPA.
+
+        Requires completed science optics with getHoErrorBreakDown=True.
+        Records are also available in hoErrorBreakDown. LO remains in the
+        existing separate LO_res output and is excluded from these totals.
+        Conventional models retain P3's existing reporting behavior.
+        """
+        if not self.finiteApertureReconstruction:
+            return self.fao.errorBreakDown(verbose=verbose)
+        records = dict(self.hoErrorBreakDown)
+        if not records:
+            raise ValueError('Enable getHoErrorBreakDown and evaluate science optics first')
+        if verbose:
+            field = min(records, key=lambda i: self.fao.ao.src.zenith[i])
+            records[field].print(float(self.wvlRef))
+        return records
 
     def _validate_static_map_optics(self):
         if self.nWvl != 1 or self.tipTiltRemoval != 'pupil_fit' or not self.fullFluxNormalization:

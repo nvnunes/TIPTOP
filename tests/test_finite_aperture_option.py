@@ -100,6 +100,7 @@ def test_finite_static_optics_preserves_rms_independently_of_standard_option():
     images=[]
     for setting in (None,False,True):
         simulation=object.__new__(baseSimulation)
+        simulation.getHoErrorBreakDown=False
         simulation.nWvl=1;simulation.wvlRef=wavelength
         simulation.fao=SimpleNamespace(freq=SimpleNamespace(wvlRef=wavelength,kxAO_=np.array([[0.,0.],[.25,.25]])),
             ao=SimpleNamespace(tel=SimpleNamespace(pupil=pupil)),finite_aperture_residual=zero_residual)
