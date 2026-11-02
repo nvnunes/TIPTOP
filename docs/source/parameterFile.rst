@@ -402,15 +402,18 @@ sampling band; the configured reconstruction and DM determine that correction.
   through the actual reconstructor. Continuous square-cell sensing, configured
   shifts, main residual, alias and noise all use the same measurement basis.
 * ``'finite_aperture'``: finite valid-lenslet sensing, physical layer-dependent
-  LGS footprints, its own global reconstruction and residual covariance, and
-  the corresponding covariance-based PSF calculation in TIPTOP. It does not
-  build or add the ``alias_aware`` estimator or atmospheric PSD.
+  LGS footprints, physical phase-prior reconstruction and Gaussian actuator
+  fitting. Per-LGS mean-slope removal includes complete POLC feedback. TIPTOP
+  forms PSFs from the full residual covariance; it does not build or add the
+  ``alias_aware`` estimator or atmospheric PSD.
 
 The selector never changes ``NumberLenslets``, ``GridOffsets``, pupil geometry,
 ``TipTiltRemoval``, ``TomographicRegularizationFloor`` or physical controller
 parameters (loop gain, frame rate and delay). ``alias_aware`` currently supports
-multiple equal-pitch Shack-Hartmann WFSs and one ground-conjugate DM.
-The same geometry restriction applies to the finite model.
+multiple equal-pitch Shack-Hartmann WFSs and one common ground-conjugate DM.
+The finite model shares these restrictions. Both models can add a directional
+science mirror through paired ``DM_science`` and ``RTC_science`` sections;
+see :doc:`twoStageFourier` for the supported two-stage scope.
 
 The retired keys ``AliasAwareReconstruction``, ``FiniteApertureReconstruction``,
 ``TomographicAliasing``, ``SymmetricAliasing`` and ``SuperResolution`` are
@@ -431,6 +434,11 @@ weights and can materially affect propagated alias power; it does not inject
 measurement noise. Zero disables the relative floor. Zero-covariance bins
 retain a positive numerical diagonal and zero reconstructed signal.
 The option is per model; setting it does not change other predictions.
+
+``ReconstructionRegularization`` applies only to ``finite_aperture`` and defaults
+to ``0.0``. It adds that nonnegative fraction of the mean prior slope variance
+to the estimator covariance's diagonal. It is separate from
+``TomographicRegularizationFloor`` and does not inject measurement noise.
 
 The selected model owns its temporal response and measurement averaging:
 
@@ -482,11 +490,16 @@ is correlated. Automatic noise follows the same mapping. Symmetric alias sums
 include ``-nTimes`` through ``+nTimes`` on both axes, excluding the target.
 This model does not couple different output Fourier frequencies.
 
-The supported HO contract is CPU, one science wavelength, zero HO noise, multiple equal-pitch Shack-Hartmann WFSs, equal-height LGSs
-above every layer, one ideal ground mirror, all physical reconstruction
-layers,
-``TipTiltRemoval='pupil_fit'``, model-owned scalar POLC/instantaneous
-measurements. ``PathStaticOn`` supplies deterministic nm OPD on the telescope
+The finite-aperture HO contract requires one science wavelength, zero injected
+HO noise, multiple equal-pitch Shack-Hartmann WFSs, equal-height LGSs above every
+layer, all physical reconstruction layers, and one common Gaussian ground mirror.
+It uses ``TipTiltRemoval='pupil_fit'`` and model-owned POLC/instantaneous
+measurements, including the feedback introduced by LGS mean-slope projection.
+Paired science mirror/controller sections add a directional Gaussian ground
+mirror for HO-only MOAO. Reconstruction runs on CPU; optional CUDA/Metal covariance
+products for active two-stage finite aperture are described in :doc:`twoStageFourier`.
+
+``PathStaticOn`` supplies deterministic nm OPD on the telescope
 pupil, with the same original-pupil tilt fit as the dynamic residual. Nonzero
 maps and zero/omitted maps all use the native optical pupil-pair quadrature
 and the same blocked covariance-to-PSF calculation. For static maps, the
@@ -502,9 +515,10 @@ normalization and pupil-fit removal as ordinary P3 optics; it does not apply
 a deterministic NCPA map. Set it to zero when the same aberration is supplied
 through ``PathStaticOn``. TIPTOP also requires
 ``fullFluxNormalization=True``. Unsupported combinations raise an error;
-MOAO, nonzero noise and other controllers have not been validated.
+Nonzero HO noise and other controllers have not been validated. Active science
+correction cannot yet be combined with LO.
 
-TIPTOP can compose this HO prediction with MASTSEL's residual pointing
+For single-stage LTAO, TIPTOP can compose this HO prediction with MASTSEL's residual pointing
 covariance. With ``pupil_fit`` and full-flux output, TIPTOP forms separate
 native HO guide-star images at ``sources_LO.Wavelength`` and its configured
 directions. These images exclude the science-arm static map and extra error;
@@ -523,7 +537,9 @@ or turn the finite residual into a diagonal PSD.
 
 P3's instance-owned reconstruction and optical caches are keyed by physical
 configuration, realized atmospheric/guide inputs, numerical policy and the
-original pupil fit. TIPTOP retains the native pupil diffraction and known
+original pupil fit. Before reusing a finite calculation, P3 revalidates and
+refreshes ``DM_science``/``RTC_science`` settings, including science-on/off
+transitions. Changed settings rebuild the calculation; unchanged settings reuse it. TIPTOP retains the native pupil diffraction and known
 high-frequency incoming covariance on its native optical quadrature,
 sharing MASTSEL's public pupil-tilt fit coefficients with the
 existing optics. Accuracy and cost must be validated for a new configuration.
@@ -531,8 +547,9 @@ existing optics. Accuracy and cost must be validated for a new configuration.
 The finite residual has no equivalent diagonal PSD: ``PSD`` and ``opticalPSD``
 are ``None`` in P3/TIPTOP for this model. Ordinary reconstruction, controller
 power propagation and error decomposition are skipped. The shared native
-frequency grid, atmospheric setup and optimal-projector normalization are
-retained, together with independent chromatic/refraction contributions. The finite path includes incoming turbulence and applied
+frequency grid and atmospheric setup are retained, together with independent
+chromatic/refraction contributions. Gaussian targets use the physical weighted
+optimization directions directly, without the Fourier projector's scalar normalization. The finite path includes incoming turbulence and applied
 correction once; independent chromatic/refraction terms are added once.
 TIPTOP reports finite pupil-removed residual variance and full-flux PSFs;
 PSD export is rejected for this option. Direct P3 callers use
@@ -832,6 +849,13 @@ Can be set but not used
 |                         |         |        |not defined and will give a squarre correction area.                      |
 +-------------------------+---------+--------+--------------------------------------------------------------------------+
 
+For ``finite_aperture``, ``InfModel='gaussian'`` and ``InfCoupling`` define the
+physical influence functions. Optional ``PathInfGeometry`` supplies a FITS
+actuator layout and calibration coordinates. Without it, the mirror uses a
+centred nominal count/pitch grid, with actuator centres selected on the sampled
+illuminated telescope pupil. The telescope owns pupil weights and the INI owns
+coupling. See :doc:`twoStageFourier` for the geometry override and science mirror.
+
 [RTC]
 -----
 
@@ -845,10 +869,12 @@ these physical parameters are never changed by model selection.
 
 POLC requires gain in [0, 1], a positive rate and a nonnegative integer delay.
 Each atmospheric layer and alias uses its own frozen-flow temporal frequency
-before calculating power. Independent white measurement noise uses power gain
-``g/(2-g)``. This assumes exact subtraction of the applied DM contribution in
-the POL measurement; additional finite WFS/DM feedback is not represented.
-The current geometry restrictions of the selected model still apply.
+before calculating power. For ``alias_aware``, independent white measurement
+noise uses power gain ``g/(2-g)``; its Fourier response assumes exact subtraction
+of the applied common DM contribution in the POL measurement. The finite model
+instead retains the physical common-mirror WFS response and the complete
+feedback caused by per-LGS mean-slope projection. It currently requires zero
+injected HO noise. The geometry restrictions of the selected model still apply.
 ``TemporalModel_HO`` and ``ExposureTime`` cannot be configured independently.
 
 .. note::
@@ -889,6 +915,22 @@ The current geometry restrictions of the selected model still apply.
 |                         |         |        |value chosen to remove unseen modes when fewer than 3 stars or poor       |
 |                         |         |        |poor asterism geometry are present). Ignored if only one guide star.      |
 +-------------------------+---------+--------+--------------------------------------------------------------------------+
+
+[DM_science] and [RTC_science]
+------------------------------
+
+These optional sections must appear together. ``DM_science`` uses
+``NumberActuators``, ``DmPitchs``, ``DmHeights`` (currently ground only), and,
+for finite aperture, ``InfModel``, ``InfCoupling`` and optional ``PathInfGeometry``.
+``RTC_science`` requires explicit ``LoopGain_HO`` and ``LoopDelaySteps_HO``.
+Its gain multiplies the residual estimate directly; its integer delay uses the
+common ``RTC.SensorFrameRate_HO`` clock. It is not another integrator.
+
+Omit both sections for single-stage LTAO. ``LoopGain_HO=0`` is the science-off
+control and does not load science geometry. Active science correction supports
+``alias_aware`` or ``finite_aperture`` with zero injected HO noise, an active
+common POLC, science pitch at least the common pitch, and HO-only TIPTOP.
+See :doc:`twoStageFourier` for the two-stage calculation and numerical backend.
 
 [COMPUTATION]
 -------------

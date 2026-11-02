@@ -41,12 +41,16 @@ class baseSimulation(AbstractSimulation):
     none with LO off. Explicit methods are independent of LO availability.
     Pupil-fit projects Gaussian phase covariance and static phase onto the
     complement of the two actual-pupil tilt ramps in MASTSEL's native optics.
+    ``finiteApertureBackend`` selects numerical products ("numpy", "cuda", "mps").
+    GPU products require active finite-aperture science correction. CUDA uses
+    CuPy float64 on the current device; Metal uses float32. Reconstruction remains
+    CPU float64; set P3_DISABLE_GPU=1 before importing TIPTOP/P3.
     """
 
     def __init__(self, path, parametersFile, outputDir, outputFile, doConvolve=True,
                  doPlot=False, addSrAndFwhm=True, verbose=False, getHoErrorBreakDown=False,
                  savePSDs=False, ensquaredEnergy=False, eeRadiusInMas=50,
-                 exactMultiWavelengthPSD=False, fullFluxNormalization=False):
+                 exactMultiWavelengthPSD=False, fullFluxNormalization=False, finiteApertureBackend="numpy"):
 
         # Superclass handles all configuration loading, validation, and standard properties
         super().__init__(path, parametersFile, outputDir, outputFile, doConvolve,
@@ -82,6 +86,13 @@ class baseSimulation(AbstractSimulation):
             raise ValueError("StaticOnRmsCompensation=True currently requires TipTiltRemoval='pupil_fit'")
         self.reconstructionModel = reconstruction_model(
             self.my_data_map['sensor_HO'], self.my_data_map.get('RTC', {}))
+        from p3.aoSystem.scienceCorrection import configuration, covariance_backend
+        science, _ = configuration(self.my_data_map, self.reconstructionModel)
+        self.twoStageEnabled = science is not None and science.active
+        self.finiteApertureBackend = covariance_backend(finiteApertureBackend,
+            self.reconstructionModel, science)
+        if self.twoStageEnabled and self.LOisOn:
+            raise ValueError('Science correction currently supports HO-only TIPTOP predictions; disable LO')
         self.finiteApertureReconstruction = self.reconstructionModel == 'finite_aperture'
         if self.finiteApertureReconstruction:
             if self.tipTiltRemoval != 'pupil_fit' or not self.fullFluxNormalization:
@@ -180,9 +191,9 @@ class baseSimulation(AbstractSimulation):
                                 computeOpticalPSD=self.tipTiltRemoval == 'pupil_fit',
                                 getErrorBreakDown=self.getHoErrorBreakDown, doComputations=False,
                                 psdExpansion=True, psdPerWavelength=self.exactMultiWavelengthPSD,
-                                reduce_memory=not self.finiteApertureReconstruction,
+                                reduce_memory=not (self.finiteApertureReconstruction or self.twoStageEnabled),
                                 path_root=_TIPTOP_ROOT,
-                                config_dict=self.my_data_map)
+                                config_dict=self.my_data_map, finiteApertureBackend=self.finiteApertureBackend)
 
         if self.verbose:
             print('Setting MASTSEL PSF precision to:', self.fao.dtype)
