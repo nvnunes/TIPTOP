@@ -677,6 +677,13 @@ Can be set but not used
 
    This section is optional, if this section is not present only the HO part will be used (for ex. to simulate a SCAO NGS).
 
+``SkipEncircledEnergyPixelFloor`` is an optional boolean, defaulting to ``False``.
+It selects the radius used to measure NGS encircled energy for MASTSEL's
+Gaussian spot amplitude: ``False`` preserves the existing
+``max(FWHM, PixelScale)`` radius; ``True`` uses one FWHM radius. Detector pixel
+integration, centroid windows and focus-sensor treatment are unchanged.
+The option applies to both ordinary and full-flux pupil-fit NGS optics.
+
 +-------------------------+---------+--------+--------------------------------------------------------------------------+
 | Parameter               | Required| Type   | Description                                                              |
 +=========================+=========+========+==========================================================================+

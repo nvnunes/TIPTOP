@@ -73,6 +73,9 @@ class baseSimulation(AbstractSimulation):
         # True marks science outputs as fractions of complete propagation power.
         # Convolution and optional profiles retain this scale; crops may sum < 1.
         self.fullFluxNormalization = fullFluxNormalization
+        self.skipEncircledEnergyPixelFloor = self.my_data_map.get('sensor_LO', {}).get('SkipEncircledEnergyPixelFloor', False)
+        if not isinstance(self.skipEncircledEnergyPixelFloor, bool):
+            raise ValueError('sensor_LO.SkipEncircledEnergyPixelFloor must be a boolean')
         if 'FilterTipTilt' in self.my_data_map['sensor_HO']:
             raise ValueError('FilterTipTilt is replaced by sensor_HO.TipTiltRemoval')
         method = self.my_data_map['sensor_HO'].get('TipTiltRemoval', 'auto')
@@ -701,12 +704,13 @@ class baseSimulation(AbstractSimulation):
                 fx, fy = getFWHM(arrayMastseltoP3(img.sampling), scale, method='contour', nargout=2)
                 width = float(np.sqrt(fx*fy)); self.NGS_FWHM_mas_field.append(width)
                 # MASTSEL scales its Gaussian centroid model by the physical
-                # flux fraction inside max(FWHM, detector pixel), in mas.
+                # flux fraction inside the selected NGS energy radius, in mas.
                 # Do not renormalize a finite crop to its enclosed flux.
                 energy, radius = getEncircledEnergy(arrayMastseltoP3(img.sampling),
                     pixelscale=scale, center=centeredPixelCoords(img.sampling.shape[0]), nargout=2)
                 pixel = self.LO_psInMas[len(self.NGS_EE_field)]
-                target = min(float(radius[-1]), max(width, pixel))
+                target = width if self.skipEncircledEnergyPixelFloor else max(width, pixel)
+                target = min(float(radius[-1]), target)
                 self.NGS_EE_field.append(float(interp1d(radius, energy, kind='cubic')(target)))
             self.NGS_DL_FWHM_mas = None
             if self.addLoAlias:
@@ -788,7 +792,8 @@ class baseSimulation(AbstractSimulation):
                 ee_ *= 1 / np.max(ee_)
                 ee_fn = interp1d(rr_, ee_, kind='cubic', bounds_error=False)
                 ps_mas_i = self.LO_psInMas[idx] if isinstance(self.LO_psInMas, list) else self.LO_psInMas
-                ee_NGS = ee_fn(min(rr_[-1], max(FWHM, ps_mas_i)))
+                radius = FWHM if self.skipEncircledEnergyPixelFloor else max(FWHM, ps_mas_i)
+                ee_NGS = ee_fn(min(rr_[-1], radius))
                 ee_NGS = float(ee_NGS.item() if hasattr(ee_NGS, 'item') else ee_NGS)
             self.NGS_EE_field.append(ee_NGS)
 
