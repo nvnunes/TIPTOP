@@ -196,7 +196,19 @@ class AbstractSimulation(ABC):
             raise ValueError("'PixelResponse' in section 'sensor_science' must be True or False, "
                              f"got {self.pixelResponse!r}")
 
+        self.perfectCoronagraph = self.my_data_map['sensor_science'].get('PerfectCoronagraph', False)
+        if not isinstance(self.perfectCoronagraph, bool):
+            raise ValueError("'PerfectCoronagraph' in section 'sensor_science' must be True or False, "
+                             f"got {self.perfectCoronagraph!r}")
+
         self.jitter_FWHM = self.my_data_map['telescope'].get('jitter_FWHM', None)
+        if self.perfectCoronagraph:
+            # LO residual and jitter are applied as convolutions of the PSF, which is not
+            # valid behind a coronagraph (it rejects the light frame by frame)
+            if self.LOisOn:
+                raise ValueError("'PerfectCoronagraph' is supported only without a LO loop ([sensor_LO])")
+            if self.jitter_FWHM is not None and np.any(np.atleast_1d(self.jitter_FWHM)[:2] != 0):
+                raise ValueError("'PerfectCoronagraph' is supported only without 'jitter_FWHM'")
         self.addFocusError = self.my_data_map['telescope'].get('glFocusOnNGS', False)
         self.GFinPSD = False
 
@@ -317,6 +329,13 @@ class AbstractSimulation(ABC):
         if self.cubeResultsArray is None:
             raise RuntimeError("cubeResultsArray must be populated before calling computePSF1D")
             
+        coro = getattr(self, 'perfectCoronagraph', False)
+
+        def profile_center(psf):
+            if coro:
+                return tuple(size // 2 for size in psf.shape)
+            return np.unravel_index(np.argmax(psf), psf.shape)
+
         psf1d = []
         psf1d_radius_list_list = []
         use_polar_interp = self.SupSamp and self.SupSamp[1] == 2
@@ -327,7 +346,7 @@ class AbstractSimulation(ABC):
             step_interp = self.SupSamp[0]
             # Handle both (nWvl, nPointings, N, N) and (nPointings, N, N)
             first_psf = self.cubeResultsArray[0, 0] if self.nWvl > 1 else self.cubeResultsArray[0]
-            center = np.unravel_index(np.argmax(first_psf), first_psf.shape)
+            center = profile_center(first_psf)
             maxradius = self.psInMas * (first_psf.shape[0] / 2)
             r_vals_interp, polar_grid = precompute_polar_grid(step=step_interp,
                                                               pixelscale=self.psInMas,
@@ -339,7 +358,7 @@ class AbstractSimulation(ABC):
             
             for psf in cubeResults:
                 psfRadius = psf.shape[0] / 2
-                center = np.unravel_index(np.argmax(psf), psf.shape)
+                center = profile_center(psf)
                 rr, radialprofile, _ = radial_profile(psf,
                                                       ext=0,
                                                       pixelscale=self.psInMas,
@@ -354,7 +373,7 @@ class AbstractSimulation(ABC):
                                                       polar_grid=polar_grid,
                                                       r_vals=r_vals_interp,
                                                       verbose=self.verbose)
-                psf1dList.append(radialprofile / psf.sum())
+                psf1dList.append(radialprofile if coro else radialprofile / psf.sum())
                 psf1d_radius_list.append(rr)
                 
             psf1d.append(psf1dList)
@@ -497,6 +516,9 @@ class AbstractSimulation(ABC):
         if self.pixelResponse:
             for hdu in hdul1[1:4]:
                 hdu.header['PIX_RESP'] = (True, 'PSF integrated over the detector pixel')
+        if self.perfectCoronagraph:
+            hdr1['CONTENT'] = "PERFECT CORONAGRAPH IMAGE CUBE"
+            hdr1['CORONAGR'] = (True, 'perfect coronagraph, fraction of stellar flux')
 
         idx_offset = 4
         if self.savePSDs and self.psd_array is not None:
