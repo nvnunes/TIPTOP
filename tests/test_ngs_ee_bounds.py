@@ -31,28 +31,37 @@ def _ngs_state(detector_scale):
 
 
 @pytest.mark.parametrize('as_list', [False, True])
-@pytest.mark.parametrize('detector_scale', [20.0, 1000.0])
-def test_ngs_ee_stays_in_the_available_profile(monkeypatch, as_list, detector_scale):
+@pytest.mark.parametrize('detector_scale, clamped', [
+    pytest.param(20.0, False, id='inside-profile'),
+    pytest.param(1000.0, True, id='outside-profile'),
+])
+def test_ngs_ee_stays_in_the_available_profile(monkeypatch, as_list, detector_scale, clamped):
     module = importlib.import_module('tiptop.baseSimulation')
     state = _ngs_state([detector_scale] if as_list else detector_scale)
     profiles = []
     get_energy = module.getEncircledEnergy
 
-    def record_profile(*args, **kwargs):
-        energy, radius = get_energy(*args, **kwargs)
-        profiles.append((energy.copy(), radius.copy()))
-        return energy, radius
+    def record_profile(psf, *, pixelscale, center, nargout):
+        energy, bin_edges = get_energy(psf, pixelscale=pixelscale, center=center, nargout=nargout)
+        y, x = np.indices(psf.shape)
+        pixel_bins = np.round(np.hypot(x - center[0], y - center[1]))
+        pixel_counts = [np.count_nonzero(pixel_bins <= k) for k in range(len(energy))]
+        # Each cumulative bin covers this many pixels. Match its area to a disk.
+        radius = pixelscale * np.sqrt(np.asarray(pixel_counts) / np.pi)
+        profiles.append((np.r_[0.0, energy / energy.max()], np.r_[0.0, radius]))
+        return energy, bin_edges
 
     monkeypatch.setattr(module, 'getEncircledEnergy', record_profile)
     baseSimulation._compute_ngs_psf(state)
 
-    energy, radius = profiles[0]
-    energy /= energy.max()
+    [(energy, radius)] = profiles
+    requested = max(state.NGS_FWHM_mas_field[0], detector_scale)
     result = state.NGS_EE_field[0]
     assert np.isfinite(result)
-    if detector_scale > radius[-1]:
+    if clamped:
+        assert requested > radius[-1]
         assert result == pytest.approx(1.0)
     else:
-        requested = max(state.NGS_FWHM_mas_field[0], detector_scale)
+        assert 0 < requested < radius[-1]
         expected = float(interp1d(radius, energy, kind='cubic')(requested))
         assert result == pytest.approx(expected)
