@@ -146,6 +146,8 @@ class baseSimulation(AbstractSimulation):
         if not isinstance(method, str) or method not in ('auto', 'none', 'spectral', 'pupil_fit'):
             raise ValueError("sensor_HO.TipTiltRemoval must be 'auto', 'none', 'spectral' or 'pupil_fit'")
         self.tipTiltRemoval = ('spectral' if self.LOisOn else 'none') if method == 'auto' else method
+        if self.perfectCoronagraph and (self.fullFluxNormalization or self.tipTiltRemoval == 'pupil_fit'):
+            raise ValueError('PerfectCoronagraph requires stationary optics and fullFluxNormalization=False')
         self.staticOnRmsCompensation = self.my_data_map['telescope'].get('StaticOnRmsCompensation', False)
         if not isinstance(self.staticOnRmsCompensation, bool):
             raise ValueError('telescope.StaticOnRmsCompensation must be a boolean')
@@ -349,6 +351,8 @@ class baseSimulation(AbstractSimulation):
                              f" differs from P3 '{float(cpuArray(self.fao.freq.psInMas[0]))}'")
 
         self.opdMap = arrayP3toMastsel(self.fao.ao.tel.opdMap_on) if self.fao.ao.tel.opdMap_on is not None else None
+        if self.perfectCoronagraph and self.opdMap is not None:
+            raise ValueError("'PerfectCoronagraph' is supported only without static aberrations (opdMap)")
 
         if self.verbose:
             print('PSD step:', self.PSDstep)
@@ -485,11 +489,9 @@ class baseSimulation(AbstractSimulation):
                 # calling convention.
                 PSD_HO = [arrayP3toMastsel(self.PSD[i][0:self.nPointings])
                           for i in range(self.nWvl)]
-                psfLongExpPointingsArr = psf_builder(
-                    PSD_HO, mask, self.wvl, nPixPup=self.sx_per_wvl,
-                    freq_range=self.freq_range_per_wvl, dk=self.dk_per_wvl,
-                    nPixPsf=self.nPixPSF, opdMap=self.opdMap, **psf_options,
-                )
+                psf_args = dict(nPixPup=self.sx_per_wvl, freq_range=self.freq_range_per_wvl,
+                                dk=self.dk_per_wvl, nPixPsf=self.nPixPSF, opdMap=self.opdMap, **psf_options)
+                psfLongExpPointingsArr = psf_builder(PSD_HO, mask, self.wvl, **psf_args)
                 # HO_res (WFE in nm) is physically wavelength-independent;
                 # any grid gives the same value up to the numerical-resolution
                 # differences between grids, so the wvlRef-matching one is
@@ -499,11 +501,9 @@ class baseSimulation(AbstractSimulation):
                     self.PSD[self.wvlRef_grid_idx][0:self.nPointings], axis=(1, 2)))
             else:
                 PSD_HO = arrayP3toMastsel(self.PSD[0:self.nPointings])
-                psfLongExpPointingsArr = psf_builder(PSD_HO, mask, self.wvl,
-                                                        nPixPup=self.sx, freq_range=self.freq_range,
-                                                        dk=self.dk, nPixPsf=self.nPixPSF,
-                                                        oversampling=self.overSamp,
-                                                        opdMap=self.opdMap, **psf_options)
+                psf_args = dict(nPixPup=self.sx, freq_range=self.freq_range, dk=self.dk,
+                                nPixPsf=self.nPixPSF, oversampling=self.overSamp, opdMap=self.opdMap, **psf_options)
+                psfLongExpPointingsArr = psf_builder(PSD_HO, mask, self.wvl, **psf_args)
 
                 # Safely compute HO residuals
                 self.HO_res = np.sqrt(np.sum(self.PSD[0:self.nPointings], axis=(1, 2)))
@@ -540,6 +540,9 @@ class baseSimulation(AbstractSimulation):
                         self.pointings_FWHM_mas = fwhmList
 
             self.psfLongExpPointingsArr = psfLongExpPointingsArr
+            if self.perfectCoronagraph:
+                self.psfCoroPointingsArr = psdSetToPsfSet(
+                    PSD_HO, mask, self.wvl, perfectCoronagraph=True, **psf_args)
 
         # ------------------------------------------------------------------------
         # --- Final Convolutions ---
@@ -552,6 +555,8 @@ class baseSimulation(AbstractSimulation):
                     self.cov_ellipses = lo_data.get('cov_ellipses')
             else:
                 self._apply_no_convolution()
+        elif self.perfectCoronagraph:
+            self._apply_no_convolution()
         else:
             self._apply_jitter_convolution()
 
@@ -567,6 +572,17 @@ class baseSimulation(AbstractSimulation):
             self.cubeResultsArray = cubeResultsArray[0]
         if not self.fullFluxNormalization and self.cubeResultsArray.ndim >= 3:
             self.cubeResultsArray /= self.cubeResultsArray.sum(axis=(-2, -1), keepdims=True)
+            if self.perfectCoronagraph:
+                # Express the image relative to the unocculted stellar flux in the field.
+                coronagraph = []
+                for i in range(self.nWvl):
+                    images = self.psfCoroPointingsArr[i] if self.nWvl > 1 else self.psfCoroPointingsArr
+                    references = self.psfLongExpPointingsArr[i] if self.nWvl > 1 else self.psfLongExpPointingsArr
+                    coronagraph.append(np.array([
+                        cpuArray(image.sampling) / float(cpuArray(reference.sampling).sum())
+                        for image, reference in zip(images, references)
+                    ]))
+                self.cubeResultsArray = np.array(coronagraph) if self.nWvl > 1 else coronagraph[0]
 
     def _finite_aperture_psfs(self):
         """Compose P3 finite covariance with TIPTOP's nonstationary optics."""
