@@ -7,6 +7,7 @@ MASTSEL receives an ordinary map through its existing public optics API.
 
 import numpy as np
 from mastsel import congrid, psdSetToPsfSet
+from mastsel.mavisPsf import pupilOnGrid
 from .tiptopUtils import cpuArray
 
 
@@ -34,8 +35,17 @@ def static_phase_rms_scale(pupil, phase, pupil_pixels):
     original = variance(phase, pupil)
     if original <= np.finfo(float).eps**2*max(1.,float(np.max(abs(phase)))**2):
         return 1.
-    coarse = np.asarray(cpuArray(congrid(phase, [pupil_pixels]*2)))
-    sampled = variance(coarse, np.asarray(cpuArray(congrid(pupil, [pupil_pixels]*2))))
+    # An even grid covering the pupil has the same origin as the native
+    # pupil-fit optics. Empty padding contributes zero intensity weight.
+    if float(pupil_pixels).is_integer():
+        shape = [int(pupil_pixels)] * 2
+        coarse = cpuArray(congrid(phase, shape))
+        mask = cpuArray(congrid(pupil, shape))
+    else:
+        size = int(2 * np.ceil(pupil_pixels / 2))
+        coarse = pupilOnGrid(phase, pupil_pixels, size, np)
+        mask = pupilOnGrid(pupil, pupil_pixels, size, np)
+    sampled = variance(coarse, mask)
     if sampled <= 0:
         raise ValueError('Static map loses all phase variance on the native optical pupil')
     return float(np.sqrt(original/sampled))
