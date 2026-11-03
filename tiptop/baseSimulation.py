@@ -6,7 +6,7 @@ from scipy.interpolate import interp1d
 # P3 Imports
 from p3.aoSystem.fourierModel import fourierModel
 from p3.aoSystem.reconstruction import reconstruction_model
-from p3.aoSystem.FourierUtils import getStrehl, getFWHM, getEncircledEnergy, getEnsquaredEnergy, pistonFilter
+from p3.aoSystem.FourierUtils import getFWHM, getEncircledEnergy, getEnsquaredEnergy, pistonFilter, telescopeOtf, otf2psf
 
 # Mastsel Imports
 from mastsel import MavisLO, psdSetToPsfSet, longExposurePsf, Field, convolve, residualToSpectrum, maskSA
@@ -23,6 +23,25 @@ rad2mas = 3600 * 180 * 1000 / np.pi
 # TIPTOP repo root — used as path_root when calling fourierModel so that
 # auxiliary files referenced as 'tiptop/data/...' in config files are found.
 _TIPTOP_ROOT = str(Path(__file__).resolve().parent.parent)
+
+
+def _lo_psf_fwhm(psf, pixel_scale, max_contour_pixels=10000):
+    """FWHM (x, y) [mas] of an NGS/Focus PSF, the input of the MASTSEL LO noise model.
+
+    Contour method as for the science PSFs, except for very wide PSFs (more than
+    max_contour_pixels above half maximum, e.g. focus sensors with small
+    sub-apertures): there the contour costs O(boundary x area) (~0.1 s) and the
+    equivalent-circle diameter 2 sqrt(A/pi) is used instead. For an ellipse it is
+    exactly sqrt(FWHM_x FWHM_y), the quantity used downstream; at these sizes the
+    pixel quantization of A is below ~1 % (MORFEO focus PSFs: -0.5..+1.1 % vs the
+    contour, GF_res -0.2 %).
+    """
+    img = cpuArray(psf)
+    n_above = int((img > img.max() / 2).sum())
+    if n_above > max_contour_pixels:
+        fwhm = 2 * np.sqrt(n_above / np.pi) * float(pixel_scale)
+        return fwhm, fwhm
+    return getFWHM(arrayMastseltoP3(psf), pixel_scale, method='contour', nargout=2)
 
 
 class baseSimulation(AbstractSimulation):
@@ -501,6 +520,8 @@ class baseSimulation(AbstractSimulation):
             self.cubeResultsArray = np.array(cubeResultsArray)
         else:
             self.cubeResultsArray = np.array(cubeResultsArray[0])
+        if not self.fullFluxNormalization and self.cubeResultsArray.ndim >= 3:
+            self.cubeResultsArray /= self.cubeResultsArray.sum(axis=(-2, -1), keepdims=True)
 
     def _finite_aperture_psfs(self):
         """Compose P3 finite covariance with TIPTOP's nonstationary optics."""
@@ -600,12 +621,7 @@ class baseSimulation(AbstractSimulation):
         if self.savePSDs:
             self.psd_array = cpuArray(self.PSD)
 
-        if self.skipPSF1D:
-            # radial_profile normally applies this cube scaling in place.
-            # Keep Field results untouched for conserved-flux consumers.
-            if not self.fullFluxNormalization:
-                self.cubeResultsArray /= self.cubeResultsArray.sum(axis=(-2, -1), keepdims=True)
-        else:
+        if not self.skipPSF1D:
             self.computePSF1D()
 
         if self.verbose:
@@ -665,9 +681,19 @@ class baseSimulation(AbstractSimulation):
                 samp = self.wvl[i] * rad2mas / (self.psInMas * 2 * self.tel_radius)
                 rebin_fwhm = max(1, int(np.ceil(2.0 / samp))) if samp < 2.0 else 1
 
+                # Same operations as getStrehl(method='max', psfInOnePix=True),
+                # with the diffraction-limited PSF computed once per wavelength
+                # instead of once per PSF.
+                psfDL = otf2psf(telescopeOtf(self.fao.ao.tel.pupil, samp), psfInOnePix=True).clip(0, None)
+                psfDL /= psfDL.sum()
+                dl_peak = psfDL.max()
+
                 sr_l, fwhm_l, ee_l = [], [], []
                 for img in results_slice:
-                    sr_l.append(getStrehl(arrayMastseltoP3(img.sampling), self.fao.ao.tel.pupil, samp, method='max', psfInOnePix=True))
+                    psf = arrayMastseltoP3(img.sampling).clip(0, None)
+                    psf /= psf.sum()
+                    # host float, as getStrehl returned (psf is a cupy array on GPU)
+                    sr_l.append(np.round(float(psf.max() / dl_peak), 5))
                     fwhm_l.append(getFWHM(arrayMastseltoP3(img.sampling), self.psInMas, method='contour',
                                           rebin=rebin_fwhm, nargout=1))
 
@@ -727,7 +753,7 @@ class baseSimulation(AbstractSimulation):
             scale = provenance['pixel_scale_mas']
             for img in images:
                 self.NGS_SR_field.append(float(np.exp(-img.residual_phase_variance)))
-                fx, fy = getFWHM(arrayMastseltoP3(img.sampling), scale, method='contour', nargout=2)
+                fx, fy = _lo_psf_fwhm(img.sampling, scale)
                 width = float(np.sqrt(fx*fy)); self.NGS_FWHM_mas_field.append(width)
                 # MASTSEL scales its Gaussian centroid model by the physical
                 # flux fraction inside the selected NGS energy radius, in mas.
@@ -806,7 +832,7 @@ class baseSimulation(AbstractSimulation):
                   else np.exp(-s1 * (2*np.pi*1e-9/self.LO_wvl)**2))
             self.NGS_SR_field.append(SR)
 
-            fwhmX, fwhmY = getFWHM(arrayMastseltoP3(img.sampling), LO_PSFsInMas, method='contour', nargout=2)
+            fwhmX, fwhmY = _lo_psf_fwhm(img.sampling, LO_PSFsInMas)
             FWHM = np.sqrt(fwhmX * fwhmY)
             self.NGS_FWHM_mas_field.append(FWHM)
 
@@ -877,7 +903,7 @@ class baseSimulation(AbstractSimulation):
                                                if self.tipTiltRemoval == 'pupil_fit'
                                                else np.exp(-s1 * (2*np.pi*1e-9/self.Focus_wvl)**2))
 
-                    fwhmX, fwhmY = getFWHM(arrayMastseltoP3(img.sampling), Focus_PSFsInMas, method='contour', nargout=2)
+                    fwhmX, fwhmY = _lo_psf_fwhm(img.sampling, Focus_PSFsInMas)
                     FWHM = np.sqrt(fwhmX * fwhmY)
                     self.Focus_FWHM_mas_field.append(FWHM)
 
