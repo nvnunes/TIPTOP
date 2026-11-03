@@ -42,8 +42,9 @@ class baseSimulation(AbstractSimulation):
     Pupil-fit projects Gaussian phase covariance and static phase onto the
     complement of the two actual-pupil tilt ramps in MASTSEL's native optics.
     ``finiteApertureBackend`` selects numerical products ("numpy", "cuda", "mps").
-    GPU products require active finite-aperture science correction. CUDA uses
-    CuPy float64 on the current device; Metal uses float32. Reconstruction remains
+    CUDA supports single- and two-stage finite optics with resident CuPy float64
+    covariance and pupil-pair integration on the current device. Metal uses
+    float32 and requires active finite-aperture science correction. Reconstruction remains
     CPU float64; set P3_DISABLE_GPU=1 before importing TIPTOP/P3.
     """
 
@@ -554,11 +555,13 @@ class baseSimulation(AbstractSimulation):
         optics=AliasStaticOptics(cpuArray(self.fao.ao.tel.pupil),phase,
             float(self.fao.ao.tel.D),period,self.N,self.sx,float(self.fao.freq.kcMax_))
         self.staticMapTimings=[];results=[]
+        # This optical calculation consumes host spectra, including their grid scalars.
+        dk=float(cpuArray(self.dk));freq_range=float(cpuArray(self.freq_range))
         for psd in self.PSD:
             started=time.perf_counter()
-            spectrum=np.fft.ifftshift(cpuArray(psd)/self.dk**2)*(np.pi/self.wvlRef*self.freq_range)**2
+            spectrum=np.fft.ifftshift(cpuArray(psd)/dk**2)*(np.pi/self.wvlRef*freq_range)**2
             image,checks=optics.psf(spectrum)
-            result=Field(self.wvlRef,self.N,self.wvlRef*self.freq_range,'rad')
+            result=Field(self.wvlRef,self.N,self.wvlRef*freq_range,'rad')
             result.sampling=image;result.residual_phase_variance=checks['residual_phase_variance']
             results.append(result);self.staticMapTimings.append(dict(seconds=time.perf_counter()-started,**checks))
         self.staticMapHighCacheBuilds=optics.high_cache_builds

@@ -25,27 +25,28 @@ estimator parameter is ``ReconstructionRegularization`` (default zero), a fracti
 of mean prior slope variance, separate from actual noise and the numerical floor.
 
 ``baseSimulation(..., finiteApertureBackend='numpy')`` defaults to CPU. Explicit
-``'cuda'`` (CuPy float64) and ``'mps'`` (Torch Metal float32) accelerate only
-active two-stage finite aperture. Reconstruction solves stay CPU float64. Set
+``'cuda'`` (CuPy float64) supports single- and two-stage finite aperture.
+``'mps'`` (Torch Metal float32) requires active two-stage correction. Reconstruction solves stay CPU float64. Set
 ``P3_DISABLE_GPU=1`` before importing TIPTOP/P3 to keep its global arrays on CPU;
 this leaves explicit finite-aperture device products enabled. CuPy uses the
 current CUDA device, which must remain current while using the model. Missing
 dependencies or devices raise errors without CPU fallback. This execution choice
 is not an INI physics option.
 
-For Metal, TIPTOP integrates resident P3 covariance tiles into pupil-pair
+For CUDA and Metal, TIPTOP integrates resident P3 covariance tiles into pupil-pair
 coherence before returning the small lag vectors to the existing CPU optical
 transform. Original-map static optics and full-flux conventions are unchanged.
 P3 owns covariance caches and bounded direction batches; TIPTOP owns optical
 weights and accumulation. Where Torch's optional Metal shader API is available,
 pair structure functions, complex-pupil weights and lag accumulation are fused;
-otherwise the same Torch operations remain available. CPU and CUDA retain their
-existing optical paths.
+otherwise the same Torch operations remain available. CUDA uses a float64
+fused kernel, requiring CUDA toolkit headers and compute capability 6.0 or newer.
+The CPU optical path is unchanged.
 
-Multi-direction Metal predictions overlap one CPU producer of complete science
+Multi-direction two-stage CUDA and Metal predictions overlap one CPU producer of complete science
 weights with the serial device/optical loop, bounded by two direction batches.
 All device operations stay on the prediction thread. Prediction inputs must
-remain immutable, and exit joins the producer even on error. CPU/CUDA and
+remain immutable, and exit joins the producer even on error. CPU, single-stage CUDA and
 optional error-budget calculations retain serial preparation. This changes
 scheduling, not the physical calculation or numerical precision.
 

@@ -82,10 +82,11 @@ def finite_pupil_fields(native, pupil, opd, n, side, period, fields):
     images, profiles = [], []
     fields=tuple(fields)
     backend=prepared.backend;device=None
-    if getattr(native,'finiteApertureBackend',None)=='mps' and getattr(native,'twoStageEnabled',False):
+    if getattr(native,'finiteApertureBackend',None) in ('mps', 'cuda'):
         backend.prepare_optics(sampling,dense_source=False)
         device=getattr(backend,'device',None)
     pipeline=(backend.directional_preparation(fields) if device is not None
+              and getattr(native, 'twoStageEnabled', False)
               and len(fields)>1 and not getattr(native,'getErrorBreakDown',False) else nullcontext())
     with pipeline:
         for position,field in enumerate(fields):
@@ -99,7 +100,7 @@ def finite_pupil_fields(native, pupil, opd, n, side, period, fields):
             if batch_seconds:
                 profile=dict(profile,direction_batch_query_seconds=batch_seconds,
                              direction_batch_size=min(device.direction_batch_size,len(fields)-position))
-            backend=native._finite_aperture_backend() if getattr(native,'finiteApertureBackend',None)=='mps' else None
+            backend=native._finite_aperture_backend() if getattr(native,'finiteApertureBackend',None) in ('mps', 'cuda') else None
             device=getattr(backend,'device',None)
             if device is not None:
                 if static is not None and not prepared.static_prepared:
@@ -108,7 +109,10 @@ def finite_pupil_fields(native, pupil, opd, n, side, period, fields):
                                  static_source_preparation_seconds=seconds)
                     prepared.static_prepared=True
                 if device_optics is None or device_optics.owner is not device:
-                    from .finite_device_optics import DevicePupilIntegrator
+                    if native.finiteApertureBackend == "cuda":
+                        from .finite_cuda_optics import CudaPupilIntegrator as DevicePupilIntegrator
+                    else:
+                        from .finite_device_optics import DevicePupilIntegrator
                     amplitude=sampling.amplitude if static is None else static.amplitude
                     phasor=sampling._static_phasor if static is None else static.phasor
                     device_optics=DevicePupilIntegrator(device,sampling,amplitude,phasor)
