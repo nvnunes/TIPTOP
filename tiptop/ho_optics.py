@@ -187,8 +187,10 @@ def guide_star_optics(simulation):
         config_dict=config)
     native.initComputations()
     n = int(native.freq.nOtf)
-    freq_range = n*native.freq.PSDstep
-    side = int(2*np.round(simulation.tel_radius*freq_range))
+    freq_range = n*float(cpuArray(native.freq.PSDstep))
+    side = 2 * simulation.tel_radius * freq_range
+    if simulation.finiteApertureReconstruction:
+        side = int(2 * np.round(side / 2))
     period = 1/float(native.freq.kxAO_[1,0]-native.freq.kxAO_[0,0])
     pupil = cpuArray(native.ao.tel.pupil)
     profiles = None
@@ -198,7 +200,7 @@ def guide_star_optics(simulation):
     else:
         images = psdSetToPsfSet(arrayP3toMastsel(native.opticalPSD.transpose()),
             arrayP3toMastsel(pupil), wavelength, nPixPup=side,
-            freq_range=freq_range, dk=native.freq.dk_, nPixPsf=n,
+            freq_range=freq_range, dk=float(cpuArray(native.freq.dk_)), nPixPsf=n,
             oversampling=1., full_flux=True, tip_tilt_removal='pupil_fit',
             tilt_fit_pupil=arrayP3toMastsel(pupil))
     return images, native, dict(seconds=time.perf_counter()-started,
