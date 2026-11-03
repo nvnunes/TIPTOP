@@ -33,6 +33,52 @@ current CUDA device, which must remain current while using the model. Missing
 dependencies or devices raise errors without CPU fallback. This execution choice
 is not an INI physics option.
 
+For Metal, TIPTOP integrates resident P3 covariance tiles into pupil-pair
+coherence before returning the small lag vectors to the existing CPU optical
+transform. Original-map static optics and full-flux conventions are unchanged.
+P3 owns covariance caches and bounded direction batches; TIPTOP owns optical
+weights and accumulation. Where Torch's optional Metal shader API is available,
+pair structure functions, complex-pupil weights and lag accumulation are fused;
+otherwise the same Torch operations remain available. CPU and CUDA retain their
+existing optical paths.
+
+Multi-direction Metal predictions overlap one CPU producer of complete science
+weights with the serial device/optical loop, bounded by two direction batches.
+All device operations stay on the prediction thread. Prediction inputs must
+remain immutable, and exit joins the producer even on error. CPU/CUDA and
+optional error-budget calculations retain serial preparation. This changes
+scheduling, not the physical calculation or numerical precision.
+
+Preparation reuse
+~~~~~~~~~~~~~~~~~
+
+Finite optical preparation belongs to one native P3 model instance. Repeated
+calls through ``finite_pupil_fields`` (including repeated
+``baseSimulation._finite_aperture_psfs``) reuse its matching sampling, static
+transfer and device integration objects. P3 retains its own matching estimator,
+atmospheric kernels and covariance preparation. Every requested PSF is still
+calculated; this is not a result cache.
+
+Keeping Python/TIPTOP loaded while constructing fresh model instances is
+insufficient. Separate simulations, processes and wavelengths do not share this
+preparation. Top-level workflows which recreate the native model receive no
+warm-reuse benefit; external workflow integration is not implemented here. An
+additional subset must refer to directions already defined on the same native
+model, rather than changing the model's science-direction configuration.
+
+Before reuse, P3 validates its complete reconstruction signature. TIPTOP checks
+exact pupil/map contents, wavelength, diameter and optical sampling. Changed
+inputs replace the single optical entry; changed P3 inputs select a new backend.
+A map-only change rebuilds static weights and source transfer while preserving
+identical geometric sampling. The native model's lifetime bounds the cache;
+there is no global/disk cache, new physical setting or duplicate atmospheric
+kernel store. Model instances are not concurrent prediction workers.
+
+The retained native MOAO benchmark with CPU/device overlap measured 84.95 s
+cold and 36.34 s warm for 109 directions, four numerical threads and Metal. This measures reuse of the
+same prepared model, not savings for independent J/H/K runs. Timings depend on
+host load; they do not define a runtime guarantee.
+
 See P3's ``docs/two-stage-fourier.md`` for the science RTC and supported scope,
 and ``docs/mirror-surfaces.md`` for the FITS geometry contract. Retired experimental
 keys are rejected; historical experiments use their retained sources.

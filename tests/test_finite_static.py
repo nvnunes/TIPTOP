@@ -66,9 +66,52 @@ def test_zero_map_keeps_native_off_pixels_bitwise():
     covariance = patterns @ patterns.T
     residual = SimpleNamespace(diagonal=np.diag(covariance), blocks=lambda:strips(covariance))
     native = SimpleNamespace(freq=SimpleNamespace(wvlRef=1.e-6), getErrorBreakDown=False,
-                             finite_aperture_residual=lambda s, f:(residual, {}))
+                             finite_aperture_residual=lambda s, f:(residual, {}),
+                             ao=SimpleNamespace(tel=SimpleNamespace(D=4.)),
+                             _finite_aperture_backend=lambda:backend)
+    backend=SimpleNamespace()
     expected = sampling.psf_blocks(np.diag(covariance),strips(covariance))[0]
     for phase in (None, np.zeros_like(pupil)):
         images, _, scale = finite_pupil_fields(native,pupil,phase,64,16,16.,[0])
         np.testing.assert_array_equal(images[0].sampling,expected)
         assert scale == 1.
+
+
+def test_preparation_reuses_only_same_native_inputs(tmp_path):
+    from tiptop.ho_optics import finite_pupil_fields
+    from test_finite_two_stage import coupled_model,sampling
+    native=coupled_model(tmp_path/'case')
+    sample=sampling(native)
+    pupil=native.ao.tel.pupil
+    arguments=(native,pupil,None,sample.n,sample.native_side,sample.period,[0])
+    first=finite_pupil_fields(*arguments)[0][0].sampling
+    context=native._finitePupilPreparation
+    second=finite_pupil_fields(*arguments)[0][0].sampling
+    assert native._finitePupilPreparation is context
+    np.testing.assert_array_equal(second,first)
+    # A new atmosphere must replace both P3 preparation and the optical entry.
+    native.ao.atm.wSpeed[0]+=1.
+    finite_pupil_fields(*arguments)
+    assert native._finitePupilPreparation is not context
+    assert native._finitePupilPreparation.backend is not context.backend
+
+
+def test_preparation_optical_key_covers_content_and_dimensions():
+    from types import SimpleNamespace
+    from tiptop.ho_optics import _finite_pupil_preparation
+    pupil,_=inputs();backend=object()
+    native=SimpleNamespace(ao=SimpleNamespace(tel=SimpleNamespace(D=4.)),
+        freq=SimpleNamespace(wvlRef=1e-6),_finite_aperture_backend=lambda:backend)
+    def prepare(p=pupil,phase=None,n=32,side=8,period=16.):
+        return _finite_pupil_preparation(native,p,phase,n,side,period)
+    initial=prepare();assert prepare(pupil.copy()) is initial
+    phase=np.zeros_like(pupil);phase[2,2]=.1
+    current=prepare(phase=phase);assert current is not initial
+    phase[2,2]=.2;assert prepare(phase=phase) is not current
+    current=prepare();changed=pupil.copy();changed[2,2]=.5
+    assert prepare(p=changed) is not current
+    current=prepare();native.freq.wvlRef=2e-6
+    assert prepare() is not current
+    current=prepare();assert prepare(n=64,side=16) is not current
+    current=prepare();assert prepare(period=18.) is not current
+    current=prepare();backend=object();assert prepare() is not current
